@@ -12,7 +12,11 @@ pub struct Player<'a> {
     pub num_generated_samples: usize,
 
     channels: Vec<Channel<'a>>,
+
+    // Individual channels are rendered there each tick
     buffer: Vec<i16>,
+
+    // Mix of all channels for each tick
     mix_buffer: Vec<i32>,
 }
 

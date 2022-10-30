@@ -40,10 +40,11 @@ fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -
 struct ChannelState<'a> {
     inv_sample_rate: f32,
     row: Row,
-    sample: Option<Rc<Sample>>,
+    sample: Option<Rc<Sample>>, // TODO: Use RefCell + borrow
     instrument: Option<Ref<'a, Instrument>>,
     note: f32,
     note_volume: usize,
+    note_panning: usize,
     note_period: f32,
     note_frequency: f32,
     note_step: f32,
@@ -52,6 +53,7 @@ struct ChannelState<'a> {
     panning_envelope_ticks: usize,
     sample_offset: f32,
     final_volume: usize,
+    final_panning: usize,
 }
 
 pub struct Channel<'a> {
@@ -66,20 +68,25 @@ impl<'a> ChannelState<'a> {
         self.note_frequency = get_note_frequency(self.note_period);
         self.note_step = self.note_frequency * self.inv_sample_rate;
         self.note_volume = sample.volume as usize;
+        self.note_panning = sample.panning as usize;
         self.note_released = false;
         self.volume_envelope_ticks = 0;
         self.panning_envelope_ticks = 0;
 
+        // Set initial note volume
         if self.row.volume >= 0x10 && self.row.volume <= 0x50 {
             self.note_volume *= (self.row.volume - 16) as usize;
             self.note_volume /= 64;
+        }
+        // Set initial note panning
+        else if self.row.volume >= 0xC0 && self.row.volume <= 0xCF {
+            self.note_panning = ((self.row.volume & 0x0F) * 16) as usize;
         }
 
         self.instrument = Some(instrument);
         self.sample = Some(sample.clone());
 
         self.sample_offset = 0.0;
-        self.final_volume = self.note_volume;
     }
 
     fn note_off(&mut self) {
@@ -90,6 +97,19 @@ impl<'a> ChannelState<'a> {
         self.note_released = true;
         self.instrument = None;
         self.sample = None;
+    }
+
+    fn apply_effects(&mut self) {
+        match self.row.effect_type {
+            // Set panning
+            0x08 => {
+                self.note_panning = self.row.effect_param as usize;
+            }
+            _ => {}
+        }
+
+        self.final_volume = self.note_volume;
+        self.final_panning = self.note_panning;
     }
 
     fn tick_envelopes(&mut self) {
@@ -123,7 +143,6 @@ impl<'a> Channel<'a> {
         };
 
         result.state.inv_sample_rate = 1.0 / (sample_rate as f32);
-
         result
     }
 
@@ -165,11 +184,16 @@ impl<'a> Channel<'a> {
             if invalid_note {
                 s.note_kill();
             }
+
+            s.apply_effects();
         }
 
         s.tick_envelopes();
 
         if let Some(sample) = &s.sample {
+            let pr = s.final_panning.clamp(0, 255) as i32;
+            let pl = 255 - pr;
+
             for i in 0..buffer.len() / 2 {
                 let mut off = s.sample_offset as usize;
                 let mut v = if off < sample.data.len() {
@@ -180,8 +204,8 @@ impl<'a> Channel<'a> {
 
                 v = v * (s.final_volume as i32) / 64;
 
-                buffer[i * 2] = v as i16;
-                buffer[i * 2 + 1] = v as i16;
+                buffer[i * 2] = ((v * pl) / 255) as i16;
+                buffer[i * 2 + 1] = ((v * pr) / 255) as i16;
 
                 s.sample_offset += s.note_step;
                 off = s.sample_offset as usize;

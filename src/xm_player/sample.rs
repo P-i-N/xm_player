@@ -11,7 +11,7 @@ pub enum LoopType {
     PingPong,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct Sample {
     pub name: String,
     pub data: Vec<i16>,
