@@ -1,5 +1,3 @@
-use std::cell::Ref;
-
 #[derive(Clone, Default)]
 pub struct Envelope {
     pub tick_values: Vec<u8>,

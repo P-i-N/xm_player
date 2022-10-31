@@ -1,12 +1,10 @@
 use std::cell::RefCell;
 use std::error;
-use std::ops::BitAnd;
 use std::rc::Rc;
 use std::rc::Weak;
 
 use super::BinaryReader;
 use super::Envelope;
-use super::FormatError;
 use super::Sample;
 
 #[derive(Clone, Default)]

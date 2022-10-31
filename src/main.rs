@@ -4,7 +4,7 @@ mod xm_player;
 use std::error;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let module = xm_player::Module::load("song.xm")?;
+    let module = xm_player::Module::load("../../song.xm")?;
 
     let mut _p = xm_player::Player::new(&module, 48000);
 

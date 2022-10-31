@@ -1,5 +1,7 @@
-use core::num;
-use std::ops::Add;
+use core::arch::x86_64;
+use std::arch::x86_64::_mm256_adds_epi16;
+use std::arch::x86_64::_mm256_loadu_si256;
+use std::arch::x86_64::_mm_loadu_si128;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -22,16 +24,16 @@ pub struct Player<'a> {
     buffer: Vec<i16>,
 
     // Mix of all channels for each tick
-    mix_buffer: Vec<i32>,
+    mix_buffer: Vec<i16>,
 
     // For calculating CPU usage
     tick_durations: Vec<Duration>,
 
     // How many microseconds it took to render & mix last row
-    cpu_row_duration: Duration,
+    row_cpu_duration: Duration,
 
-    // Estimated CPU usage (0.0% - 100.0%)
-    cpu_usage: f32,
+    // Estimated CPU usage (0.0% - 100.0%) on last row
+    row_cpu_usage: f32,
 }
 
 impl<'a> Player<'a> {
@@ -51,8 +53,8 @@ impl<'a> Player<'a> {
             buffer: vec![0; samples_per_tick * 2],
             mix_buffer: vec![0; samples_per_tick * 2],
             tick_durations: Vec::new(),
-            cpu_row_duration: Duration::ZERO,
-            cpu_usage: 0.0,
+            row_cpu_duration: Duration::ZERO,
+            row_cpu_usage: 0.0,
         };
 
         for _ in 0..module.num_channels {
@@ -82,8 +84,8 @@ impl<'a> Player<'a> {
             "{:02}{}\x1b[0m | CPU: {:.1}% row: {}us",
             self.row_index,
             s,
-            self.cpu_usage,
-            self.cpu_row_duration.as_micros()
+            self.row_cpu_usage,
+            self.row_cpu_duration.as_micros()
         );
     }
 
@@ -121,7 +123,9 @@ impl<'a> Player<'a> {
         self.pattern_index = self.module.pattern_order[self.pattern_order_index];
         self.row_index += 1;
 
-        self.cpu_row_duration = self.get_last_row_cpu_duration();
+        self.row_cpu_usage = self.estimate_cpu_usage();
+        self.row_cpu_duration = self.get_last_row_cpu_duration();
+        self.tick_durations.clear();
 
         if self.row_index == self.module.patterns[self.pattern_index].num_rows {
             self.row_index = 0;
@@ -131,9 +135,6 @@ impl<'a> Player<'a> {
                 self.pattern_order_index = self.module.restart_position;
                 self.row_index = 0;
             }
-
-            self.cpu_usage = self.estimate_cpu_usage();
-            self.tick_durations.clear();
         }
     }
 
@@ -145,36 +146,37 @@ impl<'a> Player<'a> {
         let time_start = Instant::now();
 
         // Clear 32bit mix buffer
-        for s in &mut self.mix_buffer {
-            *s = 0;
-        }
+        self.mix_buffer.fill(0);
+
+        let mut channels_tick_duration = Duration::ZERO;
 
         for i in 0..self.channels.len() {
             let channel = &mut self.channels[i];
 
-            // Clear 16bit channel temp buffer
-            for j in &mut self.buffer {
-                *j = 0;
-            }
-
             self.pattern_index = self.module.pattern_order[self.pattern_order_index];
             let row = self.module.patterns[self.pattern_index].channels[i][self.row_index];
 
+            let channel_tick_start = Instant::now();
             channel.tick(row, self.tick_index % self.module.tempo, &mut self.buffer);
+            channels_tick_duration += channel_tick_start.elapsed();
 
-            for j in 0..self.buffer.len() {
-                self.mix_buffer[j] += self.buffer[j] as i32;
+            unsafe {
+                let mut src = self.buffer.as_ptr() as *const core::arch::x86_64::__m256i;
+                let mut dst = self.mix_buffer.as_mut_ptr() as *mut core::arch::x86_64::__m256i;
+
+                for _ in (0..self.buffer.len()).step_by(16) {
+                    *dst = _mm256_adds_epi16(*src, *dst);
+
+                    src = src.add(1);
+                    dst = dst.add(1);
+                }
             }
         }
 
-        // Clamp mix buffer to 16bit range
-        for i in &mut self.mix_buffer {
-            *i = (*i).clamp(i16::MIN as i32, i16::MAX as i32);
-        }
+        //self.tick_durations.push(time_start.elapsed());
+        self.tick_durations.push(channels_tick_duration);
 
         self.num_generated_samples = self.mix_buffer.len();
-
-        self.tick_durations.push(time_start.elapsed());
 
         self.tick_index += 1;
         if (self.tick_index % self.module.tempo) == 1 {
@@ -194,7 +196,7 @@ impl<'a> Player<'a> {
 
                 let src = &self.mix_buffer[self.mix_buffer.len() - self.num_generated_samples..];
                 for i in 0..to_copy {
-                    output[num_filled_samples + i] = src[i] as i16;
+                    output[num_filled_samples + i] = src[i];
                 }
 
                 self.num_generated_samples -= to_copy;

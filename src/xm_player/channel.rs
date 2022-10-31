@@ -1,5 +1,4 @@
 use std::cell::Ref;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::Envelope;
@@ -49,7 +48,7 @@ struct ChannelState<'a> {
     note_frequency: f32,
     note_step: f32,
     note_released: bool,
-    loop_dir_back: bool,
+    loop_dir_forward: bool,
     volume_envelope_ticks: usize,
     panning_envelope_ticks: usize,
     sample_offset: f32,
@@ -71,7 +70,7 @@ impl<'a> ChannelState<'a> {
         self.note_volume = sample.volume as usize;
         self.note_panning = sample.panning as usize;
         self.note_released = false;
-        self.loop_dir_back = false;
+        self.loop_dir_forward = true;
         self.volume_envelope_ticks = 0;
         self.panning_envelope_ticks = 0;
 
@@ -186,45 +185,111 @@ impl<'a> Channel<'a> {
             if invalid_note {
                 s.note_kill();
             }
-
-            s.apply_effects();
         }
 
+        s.apply_effects();
         s.tick_envelopes();
 
         if let Some(sample) = &s.sample {
-            let pr = s.final_panning.clamp(0, 255) as i32;
-            let pl = 255 - pr;
+            let mut offset = s.sample_offset;
+            let step = s.note_step;
 
-            for i in 0..buffer.len() / 2 {
-                let mut off = s.sample_offset as usize;
-                let mut v = sample.data[off] as i32;
+            let mut vr = s.final_panning.clamp(0, 255) as i32;
+            let mut vl = 255 - vr;
 
-                v = v * (s.final_volume as i32) / 64;
+            vr = (vr * (s.final_volume as i32)) / 64;
+            vl = (vl * (s.final_volume as i32)) / 64;
 
-                buffer[i * 2] = ((v * pl) / 256) as i16;
-                buffer[i * 2 + 1] = ((v * pr) / 256) as i16;
+            unsafe {
+                let (_, bufferi32, _) = buffer.align_to_mut::<i32>();
 
-                s.sample_offset += s.note_step;
-                off = s.sample_offset as usize;
-
-                match sample.loop_type {
+                // Can we use fast path for mixing? Using fast path means we can safely forward the sample
+                // on every buffer element and not worry about hitting loop boundaries.
+                let use_fast_path = match sample.loop_type {
                     LoopType::None => {
-                        if off >= sample.data.len() {
-                            s.note_kill();
-                            break;
-                        }
+                        (offset + (bufferi32.len() as f32) * step) < sample.sample_end
                     }
                     LoopType::Forward => {
-                        if off >= sample.loop_start + sample.loop_length {
-                            s.sample_offset = sample.loop_start as f32;
-                        }
+                        (offset + (bufferi32.len() as f32) * step) < sample.loop_end
                     }
                     LoopType::PingPong => {
-                        s.note_step = 0.0;
+                        s.loop_dir_forward
+                            && ((offset + (bufferi32.len() as f32) * step) < sample.loop_end)
+                    }
+                };
+
+                if use_fast_path {
+                    for f in bufferi32 {
+                        let v = sample.data[offset as usize] as i32;
+                        *f = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
+
+                        offset += step;
+                    }
+
+                    s.sample_offset = offset;
+                } else {
+                    match sample.loop_type {
+                        LoopType::None => {
+                            bufferi32.fill(0);
+
+                            for f in bufferi32 {
+                                let v = sample.data[offset as usize] as i32;
+                                *f = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
+
+                                offset += step;
+                                if offset >= sample.sample_end {
+                                    break;
+                                }
+                            }
+
+                            s.sample_offset = offset;
+                            s.note_kill();
+                        }
+                        LoopType::Forward => {
+                            let mut dst = bufferi32.as_mut_ptr();
+
+                            for _ in (0..bufferi32.len()) {
+                                let v = *sample.data.get_unchecked(offset as usize) as i32;
+                                *dst = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
+                                dst = dst.add(1);
+
+                                offset += step;
+                                if offset >= sample.loop_end {
+                                    offset = sample.loop_start;
+                                }
+                            }
+
+                            s.sample_offset = offset;
+                        }
+                        LoopType::PingPong => {
+                            for f in bufferi32 {
+                                let v = sample.data[offset as usize] as i32;
+                                *f = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
+
+                                if s.loop_dir_forward {
+                                    offset += step;
+                                    if offset >= sample.loop_end {
+                                        offset = sample.loop_end - 1.0;
+                                        s.loop_dir_forward = false;
+                                    }
+                                } else {
+                                    offset -= step;
+                                    if offset < sample.loop_start {
+                                        offset = sample.loop_start;
+                                        s.loop_dir_forward = true;
+                                    }
+                                }
+                            }
+
+                            s.sample_offset = offset;
+                        }
                     }
                 }
             }
+        }
+        // No active sample playing on this channel right now
+        else {
+            buffer.fill(0);
         }
     }
 }

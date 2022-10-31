@@ -15,11 +15,10 @@ pub enum LoopType {
 pub struct Sample {
     pub name: String,
     pub data: Vec<i16>,
-    pub is_16bit: bool,
-    pub adpcm: bool,
     pub loop_type: LoopType,
-    pub loop_start: usize,
-    pub loop_length: usize,
+    pub loop_start: f32,
+    pub loop_end: f32,
+    pub sample_end: f32,
     pub volume: u8,
     pub panning: u8,
     pub relative_note: i8,
@@ -32,15 +31,15 @@ impl Sample {
 
         let mut sample_length = br.read_u32() as usize;
 
-        result.loop_start = br.read_u32() as usize;
-        result.loop_length = br.read_u32() as usize;
+        result.loop_start = br.read_u32() as f32;
+        result.loop_end = result.loop_start + (br.read_u32() as f32);
         result.volume = br.read_u8();
         result.finetune = br.read_u8() as i8;
 
         let flags = br.read_u8();
 
-        result.is_16bit = (flags & 0b10000) != 0;
-        if result.is_16bit {
+        let is_16bit = (flags & 0b10000) != 0;
+        if is_16bit {
             sample_length >>= 1;
         }
 
@@ -52,24 +51,29 @@ impl Sample {
         }?;
 
         result.data.resize(sample_length, 0);
+        result.sample_end = sample_length as f32;
 
         result.panning = br.read_u8();
         result.relative_note = br.read_u8() as i8;
 
         let compression_type = br.read_u8();
-        result.adpcm = compression_type == 0xAD;
 
         result.name = br.read_string_segment(22).trim().to_string();
 
         br.pos = data_pos;
-        result.read_samples(br)?;
+        result.read_samples(br, compression_type == 0xAD, is_16bit)?;
 
         Ok(result)
     }
 
-    pub fn read_samples(&mut self, br: &mut BinaryReader) -> Result<(), Box<dyn error::Error>> {
-        if !self.adpcm {
-            if self.is_16bit {
+    pub fn read_samples(
+        &mut self,
+        br: &mut BinaryReader,
+        adpcm: bool,
+        is_16bit: bool,
+    ) -> Result<(), Box<dyn error::Error>> {
+        if !adpcm {
+            if is_16bit {
                 for _ in 0..self.data.len() {
                     //
                 }
