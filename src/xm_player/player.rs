@@ -1,3 +1,8 @@
+use core::num;
+use std::ops::Add;
+use std::time::Duration;
+use std::time::Instant;
+
 use super::Channel;
 use super::Module;
 
@@ -18,6 +23,15 @@ pub struct Player<'a> {
 
     // Mix of all channels for each tick
     mix_buffer: Vec<i32>,
+
+    // For calculating CPU usage
+    tick_durations: Vec<Duration>,
+
+    // How many microseconds it took to render & mix last row
+    cpu_row_duration: Duration,
+
+    // Estimated CPU usage (0.0% - 100.0%)
+    cpu_usage: f32,
 }
 
 impl<'a> Player<'a> {
@@ -36,6 +50,9 @@ impl<'a> Player<'a> {
             channels: Vec::new(),
             buffer: vec![0; samples_per_tick * 2],
             mix_buffer: vec![0; samples_per_tick * 2],
+            tick_durations: Vec::new(),
+            cpu_row_duration: Duration::ZERO,
+            cpu_usage: 0.0,
         };
 
         for _ in 0..module.num_channels {
@@ -61,12 +78,50 @@ impl<'a> Player<'a> {
             s += row.to_colored_string().as_str();
         }
 
-        println!("{:02}{}\x1b[0m", self.row_index, s);
+        println!(
+            "{:02}{}\x1b[0m | CPU: {:.1}% row: {}us",
+            self.row_index,
+            s,
+            self.cpu_usage,
+            self.cpu_row_duration.as_micros()
+        );
+    }
+
+    fn estimate_cpu_usage(&self) -> f32 {
+        let mut result = 0.0f32;
+
+        for t in &self.tick_durations {
+            result += t.as_micros() as f32;
+        }
+
+        // Tick duration in microseconds
+        let tick_duration =
+            (1000000.0 * (self.samples_per_tick as f32)) / (self.sample_rate as f32);
+
+        (result / (tick_duration * (self.tick_durations.len() as f32))) * 100.0
+    }
+
+    fn get_last_row_cpu_duration(&self) -> Duration {
+        if self.tick_durations.is_empty() {
+            return Duration::ZERO;
+        }
+
+        let num_items = usize::min(self.tick_durations.len(), self.module.tempo);
+        let slice = &self.tick_durations[self.tick_durations.len() - num_items..];
+
+        let mut result = Duration::ZERO;
+        for d in slice {
+            result += *d;
+        }
+
+        result
     }
 
     fn step_row(&mut self) {
         self.pattern_index = self.module.pattern_order[self.pattern_order_index];
         self.row_index += 1;
+
+        self.cpu_row_duration = self.get_last_row_cpu_duration();
 
         if self.row_index == self.module.patterns[self.pattern_index].num_rows {
             self.row_index = 0;
@@ -76,6 +131,9 @@ impl<'a> Player<'a> {
                 self.pattern_order_index = self.module.restart_position;
                 self.row_index = 0;
             }
+
+            self.cpu_usage = self.estimate_cpu_usage();
+            self.tick_durations.clear();
         }
     }
 
@@ -83,6 +141,8 @@ impl<'a> Player<'a> {
         if (self.tick_index % self.module.tempo) == 0 {
             self.print_row();
         }
+
+        let time_start = Instant::now();
 
         // Clear 32bit mix buffer
         for s in &mut self.mix_buffer {
@@ -113,6 +173,8 @@ impl<'a> Player<'a> {
         }
 
         self.num_generated_samples = self.mix_buffer.len();
+
+        self.tick_durations.push(time_start.elapsed());
 
         self.tick_index += 1;
         if (self.tick_index % self.module.tempo) == 1 {

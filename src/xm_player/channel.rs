@@ -49,6 +49,7 @@ struct ChannelState<'a> {
     note_frequency: f32,
     note_step: f32,
     note_released: bool,
+    loop_dir_back: bool,
     volume_envelope_ticks: usize,
     panning_envelope_ticks: usize,
     sample_offset: f32,
@@ -70,6 +71,7 @@ impl<'a> ChannelState<'a> {
         self.note_volume = sample.volume as usize;
         self.note_panning = sample.panning as usize;
         self.note_released = false;
+        self.loop_dir_back = false;
         self.volume_envelope_ticks = 0;
         self.panning_envelope_ticks = 0;
 
@@ -196,16 +198,12 @@ impl<'a> Channel<'a> {
 
             for i in 0..buffer.len() / 2 {
                 let mut off = s.sample_offset as usize;
-                let mut v = if off < sample.data.len() {
-                    sample.data[off] as i32
-                } else {
-                    0i32
-                };
+                let mut v = sample.data[off] as i32;
 
                 v = v * (s.final_volume as i32) / 64;
 
-                buffer[i * 2] = ((v * pl) / 255) as i16;
-                buffer[i * 2 + 1] = ((v * pr) / 255) as i16;
+                buffer[i * 2] = ((v * pl) / 256) as i16;
+                buffer[i * 2 + 1] = ((v * pr) / 256) as i16;
 
                 s.sample_offset += s.note_step;
                 off = s.sample_offset as usize;
@@ -213,8 +211,7 @@ impl<'a> Channel<'a> {
                 match sample.loop_type {
                     LoopType::None => {
                         if off >= sample.data.len() {
-                            s.instrument = None;
-                            s.sample = None;
+                            s.note_kill();
                             break;
                         }
                     }
@@ -224,7 +221,7 @@ impl<'a> Channel<'a> {
                         }
                     }
                     LoopType::PingPong => {
-                        //
+                        s.note_step = 0.0;
                     }
                 }
             }
