@@ -1,4 +1,5 @@
 use std::cell::Ref;
+use std::ops::BitAnd;
 use std::rc::Rc;
 
 use super::Envelope;
@@ -35,12 +36,12 @@ fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -
     ticks
 }
 
-#[derive(Default)]
-struct ChannelState<'a> {
+pub struct Channel<'a> {
+    module: &'a Module,
     inv_sample_rate: f32,
     row: Row,
-    sample: Option<Rc<Sample>>, // TODO: Use RefCell + borrow
-    instrument: Option<Ref<'a, Instrument>>,
+    sample: Option<Rc<Sample>>,
+    instrument: Option<Rc<Instrument>>,
     note: f32,
     note_volume: usize,
     note_panning: usize,
@@ -51,18 +52,78 @@ struct ChannelState<'a> {
     loop_dir_forward: bool,
     volume_envelope_ticks: usize,
     panning_envelope_ticks: usize,
+    last_nonzero_effect_param: u8,
     sample_offset: f32,
     final_volume: usize,
     final_panning: usize,
 }
 
-pub struct Channel<'a> {
-    module: &'a Module,
-    state: ChannelState<'a>,
+macro_rules! render_samples {
+    ($buffer:ident, $sample:ident, $offset:ident, $volume_left:expr, $volume_right:expr, $step:expr, $test:block) => {
+        let mut dst = $buffer.as_mut_ptr();
+        let end = dst.add($buffer.len());
+
+        if ($step) < 1.0 {
+            let mut v = 0;
+            let mut o = usize::MAX;
+
+            // Step back
+            $offset -= $step;
+
+            while dst < end {
+                $offset += $step;
+                if ($offset as usize) != o {
+                    $test;
+                    o = $offset as usize;
+                    v = *$sample.data.get_unchecked(o) as i32;
+                    v = ((v.unchecked_mul($volume_left).unchecked_shr(8)) & 0x0000FFFF)
+                        | ((v.saturating_mul($volume_right).unchecked_shr(8)).unchecked_shl(16));
+                }
+
+                *dst = v;
+                dst = dst.add(1);
+            }
+        } else {
+            while dst < end {
+                let v = *$sample.data.get_unchecked($offset as usize) as i32;
+                *dst = ((v.unchecked_mul($volume_left).unchecked_shr(8)) & 0x0000FFFF)
+                    | ((v.saturating_mul($volume_right).unchecked_shr(8)).unchecked_shl(16));
+
+                $offset += $step;
+                $test;
+
+                dst = dst.add(1);
+            }
+        }
+    };
 }
 
-impl<'a> ChannelState<'a> {
-    fn note_on(&mut self, instrument: Ref<'a, Instrument>, sample: &Rc<Sample>) {
+impl<'a> Channel<'a> {
+    pub fn new(module: &'a Module, sample_rate: usize) -> Self {
+        Channel {
+            module,
+            inv_sample_rate: 1.0 / (sample_rate as f32),
+            row: Row::default(),
+            sample: None,
+            instrument: None,
+            note: 0.0,
+            note_volume: 0,
+            note_panning: 0,
+            note_period: 0.0,
+            note_frequency: 0.0,
+            note_step: 0.0,
+            note_released: false,
+            loop_dir_forward: true,
+            volume_envelope_ticks: 0,
+            panning_envelope_ticks: 0,
+            last_nonzero_effect_param: 0,
+            sample_offset: 0.0,
+            final_volume: 0,
+            final_panning: 0,
+        }
+    }
+
+    fn note_on(&mut self, instrument: Rc<Instrument>, sample: Rc<Sample>) {
         self.note = self.row.note as f32 + sample.relative_note as f32;
         self.note_period = get_note_period(self.note as f32 + (sample.finetune as f32) / 128.0);
         self.note_frequency = get_note_frequency(self.note_period);
@@ -73,6 +134,7 @@ impl<'a> ChannelState<'a> {
         self.loop_dir_forward = true;
         self.volume_envelope_ticks = 0;
         self.panning_envelope_ticks = 0;
+        self.last_nonzero_effect_param = 0;
 
         // Set initial note volume
         if self.row.volume >= 0x10 && self.row.volume <= 0x50 {
@@ -81,11 +143,11 @@ impl<'a> ChannelState<'a> {
         }
         // Set initial note panning
         else if self.row.volume >= 0xC0 && self.row.volume <= 0xCF {
-            self.note_panning = ((self.row.volume & 0x0F) * 16) as usize;
+            self.note_panning = ((self.row.volume & 0x0F) * 17) as usize;
         }
 
         self.instrument = Some(instrument);
-        self.sample = Some(sample.clone());
+        self.sample = Some(sample);
 
         self.sample_offset = 0.0;
     }
@@ -100,11 +162,37 @@ impl<'a> ChannelState<'a> {
         self.sample = None;
     }
 
-    fn apply_effects(&mut self) {
+    fn apply_effects(&mut self, row_tick_index: usize) {
+        // Volume slide down (or fine slide down)
+        if self.row.volume.bitand(0x60) == 0x60
+            || (self.row.volume.bitand(0x80) == 0x80 && row_tick_index == 0)
+        {
+            self.note_volume = self
+                .note_volume
+                .saturating_sub(self.row.volume.bitand(0x0F) as usize);
+        }
+        // Volume slide up (or fine slide up)
+        else if self.row.volume.bitand(0x70) == 0x70
+            || (self.row.volume.bitand(0x90) == 0x90 && row_tick_index == 0)
+        {
+            self.note_volume += self.row.volume.bitand(0x0F) as usize;
+            self.note_volume = self.note_volume.clamp(0, 64);
+        }
+
+        if self.row.effect_param != 0 {
+            self.last_nonzero_effect_param = self.row.effect_param;
+        }
+
         match self.row.effect_type {
             // Set panning
             0x08 => {
                 self.note_panning = self.row.effect_param as usize;
+            }
+            // Volume slide
+            0x0A => {
+                self.note_volume = self
+                    .note_volume
+                    .saturating_sub(self.last_nonzero_effect_param as usize);
             }
             _ => {}
         }
@@ -114,7 +202,7 @@ impl<'a> ChannelState<'a> {
     }
 
     fn tick_envelopes(&mut self) {
-        if let Some(instrument) = &self.instrument {
+        if let Some(instrument) = self.instrument.clone() {
             self.volume_envelope_ticks = follow_envelope(
                 self.volume_envelope_ticks,
                 self.note_released,
@@ -134,22 +222,12 @@ impl<'a> ChannelState<'a> {
             );
         }
     }
-}
 
-impl<'a> Channel<'a> {
-    pub fn new(module: &'a Module, sample_rate: usize) -> Self {
-        let mut result = Channel {
-            module,
-            state: ChannelState::default(),
-        };
-
-        result.state.inv_sample_rate = 1.0 / (sample_rate as f32);
-        result
+    pub fn reset(&mut self) {
+        self.note_kill();
     }
 
     pub fn tick(&mut self, mut row: Row, row_tick_index: usize, buffer: &mut [i16]) {
-        let mut s = &mut self.state;
-
         // Decode note in row
         if row_tick_index == 0 {
             let mut invalid_note = false;
@@ -158,17 +236,17 @@ impl<'a> Channel<'a> {
             //   0 = keep previous
             //  >0 = convert to zero-based index to instruments
             if row.instrument == 0 {
-                row.instrument = s.row.instrument as u8;
+                row.instrument = self.row.instrument as u8;
             } else {
                 row.instrument -= 1;
             }
 
             // Note on
             if row.note < 96 {
-                s.row = row;
-                if let Some(instrument) = self.module.get_instrument(s.row.instrument as usize) {
-                    if let Some(sample) = instrument.get_note_sample(s.row.note as usize) {
-                        s.note_on(instrument, &sample);
+                self.row = row;
+                if let Some(instrument) = self.module.get_instrument(self.row.instrument as usize) {
+                    if let Some(sample) = instrument.get_note_sample_ref(self.row.note as usize) {
+                        self.note_on(instrument, sample);
                     } else {
                         invalid_note = true;
                     }
@@ -178,27 +256,28 @@ impl<'a> Channel<'a> {
             }
             // Note off
             else if row.note == 96 {
-                s.row = row;
-                s.note_off();
+                self.row = row;
+                self.note_off();
             }
 
             if invalid_note {
-                s.note_kill();
+                self.note_kill();
+                return;
             }
         }
 
-        s.apply_effects();
-        s.tick_envelopes();
+        self.apply_effects(row_tick_index);
+        self.tick_envelopes();
 
-        if let Some(sample) = &s.sample {
-            let mut offset = s.sample_offset;
-            let step = s.note_step;
+        if let Some(sample) = self.sample.clone() {
+            let mut offset = self.sample_offset;
+            let step = self.note_step;
 
-            let mut vr = s.final_panning.clamp(0, 255) as i32;
+            let mut vr = self.final_panning.clamp(0, 255) as i32;
             let mut vl = 255 - vr;
 
-            vr = (vr * (s.final_volume as i32)) / 64;
-            vl = (vl * (s.final_volume as i32)) / 64;
+            vr = (vr * (self.final_volume as i32)) / 64;
+            vl = (vl * (self.final_volume as i32)) / 64;
 
             unsafe {
                 let (_, bufferi32, _) = buffer.align_to_mut::<i32>();
@@ -213,78 +292,58 @@ impl<'a> Channel<'a> {
                         (offset + (bufferi32.len() as f32) * step) < sample.loop_end
                     }
                     LoopType::PingPong => {
-                        s.loop_dir_forward
+                        self.loop_dir_forward
                             && ((offset + (bufferi32.len() as f32) * step) < sample.loop_end)
                     }
                 };
 
                 if use_fast_path {
-                    for f in bufferi32 {
-                        let v = sample.data[offset as usize] as i32;
-                        *f = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
-
-                        offset += step;
-                    }
-
-                    s.sample_offset = offset;
+                    render_samples!(bufferi32, sample, offset, vl, vr, step, {});
                 } else {
                     match sample.loop_type {
                         LoopType::None => {
                             bufferi32.fill(0);
 
-                            for f in bufferi32 {
-                                let v = sample.data[offset as usize] as i32;
-                                *f = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
-
-                                offset += step;
+                            render_samples!(bufferi32, sample, offset, vl, vr, step, {
                                 if offset >= sample.sample_end {
                                     break;
                                 }
-                            }
+                            });
 
-                            s.sample_offset = offset;
-                            s.note_kill();
+                            self.note_kill();
                         }
+                        // Orig benchmark time: 323ms
                         LoopType::Forward => {
-                            let mut dst = bufferi32.as_mut_ptr();
-
-                            for _ in (0..bufferi32.len()) {
-                                let v = *sample.data.get_unchecked(offset as usize) as i32;
-                                *dst = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
-                                dst = dst.add(1);
-
-                                offset += step;
+                            render_samples!(bufferi32, sample, offset, vl, vr, step, {
                                 if offset >= sample.loop_end {
                                     offset = sample.loop_start;
                                 }
-                            }
-
-                            s.sample_offset = offset;
+                            });
                         }
                         LoopType::PingPong => {
                             for f in bufferi32 {
-                                let v = sample.data[offset as usize] as i32;
+                                let v = *sample.data.get_unchecked(offset as usize) as i32;
                                 *f = (((v * vl) / 256) & 0x0000FFFF) | (((v * vr) / 256) << 16);
 
-                                if s.loop_dir_forward {
+                                if self.loop_dir_forward {
                                     offset += step;
                                     if offset >= sample.loop_end {
                                         offset = sample.loop_end - 1.0;
-                                        s.loop_dir_forward = false;
+                                        self.loop_dir_forward = false;
                                     }
                                 } else {
                                     offset -= step;
                                     if offset < sample.loop_start {
                                         offset = sample.loop_start;
-                                        s.loop_dir_forward = true;
+                                        self.loop_dir_forward = true;
                                     }
                                 }
                             }
-
-                            s.sample_offset = offset;
                         }
                     }
                 }
+
+                self.sample_offset = offset;
             }
         }
         // No active sample playing on this channel right now

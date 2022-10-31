@@ -1,17 +1,15 @@
-use std::cell::RefCell;
 use std::error;
 use std::rc::Rc;
-use std::rc::Weak;
 
 use super::BinaryReader;
 use super::Envelope;
 use super::Sample;
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct Instrument {
     pub name: String,
     pub samples: Vec<Rc<Sample>>,
-    pub sample_keymap: Vec<Weak<Sample>>,
+    pub sample_keymap: Vec<usize>,
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
     pub vibrato_type: u8,
@@ -42,9 +40,13 @@ impl Instrument {
         if num_samples > 0 {
             let _sample_header_size = br.read_u32() as usize;
 
-            let mut sample_index_keymap = [0 as u8; 96];
-            for i in &mut sample_index_keymap {
-                *i = br.read_u8();
+            for i in 0..96 {
+                let sample_index = br.read_u8() as usize;
+                if sample_index < num_samples {
+                    self.sample_keymap.push(sample_index);
+                } else {
+                    self.sample_keymap.push(usize::MAX);
+                }
             }
 
             let mut volume_env_points = [0 as usize; 24];
@@ -109,21 +111,10 @@ impl Instrument {
                 // Current binary reader position is start of next sample data position
                 sample_data_pos = br.pos;
             }
-
-            // Build sample keymap from previously loaded indices
-            for i in sample_index_keymap {
-                if (i as usize) < num_samples {
-                    self.sample_keymap
-                        .push(Rc::downgrade(&self.samples[i as usize]));
-                } else {
-                    // Invalid sample index, probably a corrupted file?
-                    self.sample_keymap.push(Weak::new());
-                }
-            }
         } else {
             // There are no samples, so sample keymap should be full of 'None's
             for _ in 0..96 {
-                self.sample_keymap.push(Weak::new());
+                self.sample_keymap.push(usize::MAX);
             }
 
             br.pos = skip_pos;
@@ -132,11 +123,16 @@ impl Instrument {
         Ok(())
     }
 
-    pub fn get_note_sample(&self, note: usize) -> Option<Rc<Sample>> {
+    pub fn get_note_sample_ref(&self, note: usize) -> Option<Rc<Sample>> {
         if note >= self.sample_keymap.len() {
             None
         } else {
-            self.sample_keymap[note].upgrade()
+            let sample_index = self.sample_keymap[note];
+            if sample_index == usize::MAX {
+                None
+            } else {
+                Some(self.samples[sample_index].clone())
+            }
         }
     }
 }

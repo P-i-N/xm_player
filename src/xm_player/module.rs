@@ -1,8 +1,7 @@
-use std::cell::Ref;
-use std::cell::RefCell;
 use std::error;
 use std::fs::File;
 use std::io::Read;
+use std::rc::Rc;
 
 use super::BinaryReader;
 use super::FormatError;
@@ -16,7 +15,7 @@ pub struct Module {
     pub version: i32,
     pub patterns: Vec<Pattern>,
     pub pattern_order: Vec<usize>,
-    pub instruments: Vec<RefCell<Instrument>>,
+    pub instruments: Vec<Rc<Instrument>>,
     pub restart_position: usize,
     pub num_instruments: usize,
     pub num_channels: usize,
@@ -47,17 +46,19 @@ impl Module {
             (*pattern).parse(&mut br)?;
         }
 
-        for instrument in &result.instruments {
-            let mut i = instrument.borrow_mut();
-            i.parse(&mut br)?;
+        for _ in 0..result.num_instruments {
+            let mut instrument = Instrument::default();
+            instrument.parse(&mut br)?;
+
+            result.instruments.push(Rc::new(instrument));
         }
 
         Ok(result)
     }
 
-    pub fn get_instrument<'a>(&'a self, index: usize) -> Option<Ref<'a, Instrument>> {
+    pub fn get_instrument(&self, index: usize) -> Option<Rc<Instrument>> {
         if index < self.instruments.len() {
-            Some(self.instruments[index].borrow())
+            Some(self.instruments[index].clone())
         } else {
             None
         }
@@ -98,9 +99,6 @@ impl Module {
         }
 
         self.num_instruments = br.read_u16() as usize;
-        for _ in 0..self.num_instruments {
-            self.instruments.push(RefCell::new(Instrument::default()));
-        }
 
         // Usage of linear frequency table
         self.linear_freq_table = br.read_u16() == 1;

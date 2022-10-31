@@ -15,18 +15,6 @@
 			"environment": [],
 			"console": "integratedTerminal",
 			"preLaunchTask": "rust: cargo build"
-		},
-		{
-			"name": "Release",
-			"type": "cppvsdbg",
-			"request": "launch",
-			"program": "${workspaceRoot}/target/release/${workspaceFolderBasename}.exe",
-			"args": [],
-			"stopAtEntry": false,
-			"cwd": "${workspaceRoot}/target/release",
-			"environment": [],
-			"console": "integratedTerminal",
-			"preLaunchTask": "rust: cargo build release"
 		}
 	]
 }
