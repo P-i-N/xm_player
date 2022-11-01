@@ -41,6 +41,8 @@ impl Sample {
         let is_16bit = (flags & 0b10000) != 0;
         if is_16bit {
             sample_length >>= 1;
+            result.loop_start = (result.loop_start / 2.0).floor();
+            result.loop_end = (result.loop_end / 2.0).floor();
         }
 
         result.loop_type = match flags & 0x3 {
@@ -74,25 +76,21 @@ impl Sample {
     ) -> Result<(), Box<dyn error::Error>> {
         if !adpcm {
             if is_16bit {
-                for _ in 0..self.data.len() {
-                    //
-                }
-
-                return Err(Box::new(FormatError::new("Not implemented!")));
-            } else {
-                let mut acc: u8 = 0;
+                let mut acc: i16 = 0;
                 for i in 0..self.data.len() {
-                    (acc, _) = acc.overflowing_add(br.read_u8());
-                    let mut sample = acc as i16;
-                    if (sample & 128) != 0 {
-                        sample = sample - 256;
-                    }
-
-                    self.data[i] = sample * 16;
+                    (acc, _) = acc.overflowing_add(br.read_i16());
+                    self.data[i] = acc;
+                }
+            } else {
+                let mut acc: i8 = 0;
+                for i in 0..self.data.len() {
+                    (acc, _) = acc.overflowing_add(br.read_i8());
+                    self.data[i] = (acc as i16) * 16;
                 }
             }
         } else {
             // ADPCM compression
+            return Err(Box::new(FormatError::new("ADPCM not supported")));
         }
 
         Ok(())

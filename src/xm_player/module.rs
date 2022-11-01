@@ -7,6 +7,7 @@ use super::BinaryReader;
 use super::FormatError;
 use super::Instrument;
 use super::Pattern;
+use super::Row;
 
 #[derive(Default)]
 pub struct Module {
@@ -42,8 +43,11 @@ impl Module {
 
         result.parse_header(&mut br)?;
 
+        let mut pattern_index = 0;
         for pattern in &mut result.patterns {
             (*pattern).parse(&mut br)?;
+
+            pattern_index += 1;
         }
 
         for _ in 0..result.num_instruments {
@@ -62,6 +66,24 @@ impl Module {
         } else {
             None
         }
+    }
+
+    pub fn get_channel_row_ordered(
+        &self,
+        pattern_order_index: usize,
+        channel_index: usize,
+        row_index: usize,
+    ) -> Row {
+        if pattern_order_index >= self.pattern_order.len() || channel_index >= self.num_channels {
+            return Row::default();
+        }
+
+        let pattern_index = self.pattern_order[pattern_order_index];
+        if pattern_index >= self.patterns.len() {
+            return Row::default();
+        }
+
+        self.patterns[pattern_index].get_channel_row(channel_index, row_index)
     }
 
     fn parse_header(&mut self, br: &mut BinaryReader) -> Result<(), Box<dyn error::Error>> {

@@ -1,6 +1,6 @@
 use std::error;
 
-use super::BinaryReader;
+use super::{BinaryReader, BitTest, NibbleTest};
 
 #[derive(Clone, Copy)]
 pub struct Row {
@@ -53,11 +53,39 @@ impl Row {
         // Volume effect
         if self.volume >= 0x10 && self.volume <= 0x50 {
             result += format!("\x1b[32mv{:02}", self.volume - 16).as_str();
+        }
+        // Slide down
+        else if self.volume.test_bitmask(0x60) {
+            result += format!("\x1b[32md{:02}", self.volume & 0x0F).as_str();
+        }
+        // Slide up
+        else if self.volume.test_bitmask(0x70) {
+            result += format!("\x1b[32mc{:02}", self.volume & 0x0F).as_str();
+        }
+        // Fine slide down
+        else if self.volume.test_bitmask(0x80) {
+            result += format!("\x1b[32mb{:02}", self.volume & 0x0F).as_str();
+        }
+        // Fine slide up
+        else if self.volume.test_bitmask(0x90) {
+            result += format!("\x1b[32ma{:02}", self.volume & 0x0F).as_str();
         } else {
             result += "   ";
         }
 
         result
+    }
+
+    pub fn has_valid_note(&self) -> bool {
+        self.note > 0 && self.note < 97
+    }
+
+    pub fn has_portamento(&self) -> bool {
+        self.effect_type == 3 || self.effect_type == 5 || self.volume.test_high_nibble(0xF0)
+    }
+
+    pub fn is_note_off(&self) -> bool {
+        self.note == 97
     }
 }
 
@@ -90,37 +118,38 @@ impl Pattern {
             i += 1;
 
             let row = &mut self.channels[channel][line];
+            *row = Row::default();
 
             // Packed row item
-            if (note & 0x80) == 0x80 {
-                if (note & 0b00001) != 0 {
-                    row.note = br.read_u8() - 1;
+            if note.test_bitmask(0x80) {
+                if note.test_bitmask(0b00001) {
+                    row.note = br.read_u8();
                     i += 1;
                 }
 
-                if (note & 0b00010) != 0 {
+                if note.test_bitmask(0b00010) {
                     row.instrument = br.read_u8();
                     i += 1;
                 }
 
-                if (note & 0b00100) != 0 {
+                if note.test_bitmask(0b00100) {
                     row.volume = br.read_u8();
                     i += 1;
                 }
 
-                if (note & 0b01000) != 0 {
+                if note.test_bitmask(0b01000) {
                     row.effect_type = br.read_u8();
                     i += 1;
                 }
 
-                if (note & 0b10000) != 0 {
+                if note.test_bitmask(0b10000) {
                     row.effect_param = br.read_u8();
                     i += 1;
                 }
             }
             // Full row item
             else {
-                row.note = note - 1;
+                row.note = note;
                 row.instrument = br.read_u8();
                 row.volume = br.read_u8();
                 row.effect_type = br.read_u8();
@@ -136,5 +165,18 @@ impl Pattern {
         }
 
         Ok(())
+    }
+
+    pub fn get_channel_row(&self, channel_index: usize, row_index: usize) -> Row {
+        if channel_index >= self.channels.len() {
+            return Row::default();
+        }
+
+        let rows = &self.channels[channel_index];
+        if row_index < rows.len() {
+            rows[row_index]
+        } else {
+            Row::default()
+        }
     }
 }

@@ -1,4 +1,4 @@
-//use std::str::from_utf8;
+use std::mem::transmute;
 
 pub struct BinaryReader<'a> {
     pub data: &'a [u8],
@@ -20,6 +20,10 @@ impl<'a> BinaryReader<'a> {
         value
     }
 
+    pub fn read_i8(&mut self) -> i8 {
+        unsafe { transmute::<u8, i8>(self.read_u8()) }
+    }
+
     pub fn read_u16(&mut self) -> u16 {
         if self.pos + 1 >= self.data.len() {
             return 0;
@@ -28,6 +32,10 @@ impl<'a> BinaryReader<'a> {
         let value = u16::from(self.data[self.pos + 1]) << 8 | u16::from(self.data[self.pos]);
         self.pos += 2;
         value
+    }
+
+    pub fn read_i16(&mut self) -> i16 {
+        unsafe { transmute::<u16, i16>(self.read_u16()) }
     }
 
     pub fn read_u32(&mut self) -> u32 {

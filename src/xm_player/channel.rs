@@ -1,4 +1,4 @@
-use std::cell::Ref;
+use std::borrow::Borrow;
 use std::ops::BitAnd;
 use std::rc::Rc;
 
@@ -6,6 +6,7 @@ use super::Envelope;
 use super::Instrument;
 use super::LoopType;
 use super::Module;
+use super::NibbleTest;
 use super::Row;
 use super::Sample;
 
@@ -46,6 +47,7 @@ pub struct Channel<'a> {
     note_volume: usize,
     note_panning: usize,
     note_period: f32,
+    note_target_period: f32,
     note_frequency: f32,
     note_step: f32,
     note_released: bool,
@@ -110,6 +112,7 @@ impl<'a> Channel<'a> {
             note_volume: 0,
             note_panning: 0,
             note_period: 0.0,
+            note_target_period: 0.0,
             note_frequency: 0.0,
             note_step: 0.0,
             note_released: false,
@@ -123,9 +126,44 @@ impl<'a> Channel<'a> {
         }
     }
 
-    fn note_on(&mut self, instrument: Rc<Instrument>, sample: Rc<Sample>) {
-        self.note = self.row.note as f32 + sample.relative_note as f32;
-        self.note_period = get_note_period(self.note as f32 + (sample.finetune as f32) / 128.0);
+    fn is_note_active(&self) -> bool {
+        self.instrument.is_some() && self.sample.is_some()
+    }
+
+    fn tn(
+        &mut self,
+        keep_period: bool,
+        keep_volume: bool,
+        keep_position: bool,
+        keep_envelope: bool,
+    ) {
+        if !keep_period {
+            self.note_period = get_note_period(self.note as f32);
+            self.note_frequency = get_note_frequency(self.note_period);
+        }
+
+        if !keep_position {
+            self.sample_offset = 0.0;
+            self.loop_dir_forward = true;
+        }
+
+        if let Some(sample) = self.sample.clone() {
+            if !keep_volume {
+                self.note_volume = sample.volume as usize;
+            }
+
+            self.note_panning = sample.panning as usize;
+        }
+    }
+
+    fn note_on(&mut self) {
+        let instrument = self.instrument.as_ref().unwrap();
+        let sample = self.sample.as_ref().unwrap();
+
+        self.note =
+            self.row.note as f32 + sample.relative_note as f32 + (sample.finetune as f32) / 128.0;
+        self.note_period = get_note_period(self.note as f32);
+        self.note_target_period = 0.0;
         self.note_frequency = get_note_frequency(self.note_period);
         self.note_step = self.note_frequency * self.inv_sample_rate;
         self.note_volume = sample.volume as usize;
@@ -145,9 +183,6 @@ impl<'a> Channel<'a> {
             self.note_panning = ((self.row.volume & 0x0F) * 17) as usize;
         }
 
-        self.instrument = Some(instrument);
-        self.sample = Some(sample);
-
         self.sample_offset = 0.0;
     }
 
@@ -163,16 +198,16 @@ impl<'a> Channel<'a> {
 
     fn apply_effects(&mut self, row_tick_index: usize) {
         // Volume slide down (or fine slide down)
-        if self.row.volume.bitand(0x60) == 0x60
-            || (self.row.volume.bitand(0x80) == 0x80 && row_tick_index == 0)
+        if self.row.volume.test_high_nibble(0x60)
+            || (self.row.volume.test_high_nibble(0x80) && row_tick_index == 0)
         {
             self.note_volume = self
                 .note_volume
                 .saturating_sub(self.row.volume.bitand(0x0F) as usize);
         }
         // Volume slide up (or fine slide up)
-        else if self.row.volume.bitand(0x70) == 0x70
-            || (self.row.volume.bitand(0x90) == 0x90 && row_tick_index == 0)
+        else if self.row.volume.test_high_nibble(0x70)
+            || (self.row.volume.test_high_nibble(0x90) && row_tick_index == 0)
         {
             self.note_volume += self.row.volume.bitand(0x0F) as usize;
             self.note_volume = self.note_volume.clamp(0, 64);
@@ -192,6 +227,10 @@ impl<'a> Channel<'a> {
                 self.note_volume = self
                     .note_volume
                     .saturating_sub(self.last_nonzero_effect_param as usize);
+            }
+            // Tone portamento
+            0x03 => {
+                //
             }
             _ => {}
         }
@@ -229,39 +268,39 @@ impl<'a> Channel<'a> {
     pub fn tick(&mut self, mut row: Row, row_tick_index: usize, buffer: &mut [i16]) {
         // Decode note in row
         if row_tick_index == 0 {
-            let mut invalid_note = false;
+            let mut trigger_note = true;
+            let mut keep_period = false;
+            let mut keep_volume = false;
+            let mut keep_position = false;
+            let mut keep_envelope = false;
 
-            // Reindex row instruments, so that:
-            //   0 = keep previous
-            //  >0 = convert to zero-based index to instruments
-            if row.instrument == 0 {
-                row.instrument = self.row.instrument as u8;
-            } else {
-                row.instrument -= 1;
-            }
-
-            // Note on
-            if row.note < 96 {
-                self.row = row;
-                if let Some(instrument) = self.module.get_instrument(self.row.instrument as usize) {
+            if row.instrument > 0 {
+                if self.row.has_portamento() && self.is_note_active() {
+                    keep_period = true;
+                    keep_position = true;
+                    trigger_note = true;
+                } else if row.note == 0 && self.is_note_active() {
+                    keep_position = true;
+                    trigger_note = true;
+                } else if let Some(instrument) =
+                    self.module.get_instrument(self.row.instrument as usize)
+                {
                     if let Some(sample) = instrument.get_note_sample_ref(self.row.note as usize) {
-                        self.note_on(instrument, sample);
-                    } else {
-                        invalid_note = true;
+                        self.instrument = Some(instrument);
+                        self.sample = Some(sample);
                     }
                 } else {
-                    invalid_note = true;
+                    // Invalid instrument
+                    self.note_kill();
                 }
             }
-            // Note off
-            else if row.note == 96 {
-                self.row = row;
-                self.note_off();
-            }
 
-            if invalid_note {
-                self.note_kill();
-                return;
+            self.row = row;
+
+            if row.has_valid_note() && self.is_note_active() {
+                self.note_on();
+            } else if row.is_note_off() {
+                self.note_off();
             }
         }
 

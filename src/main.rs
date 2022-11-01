@@ -6,7 +6,7 @@ mod xm_player;
 use std::error;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let module = xm_player::Module::load("../../deadlock.xm")?;
+    let module = xm_player::Module::load("../../unreal.xm")?;
 
     let mut player = xm_player::Player::new(&module, 48000);
 

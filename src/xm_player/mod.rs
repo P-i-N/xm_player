@@ -53,3 +53,23 @@ impl fmt::Display for FormatError {
         write!(f, "{}", self.details)
     }
 }
+
+trait BitTest<T> {
+    fn test_bitmask(&self, mask: T) -> bool;
+}
+
+trait NibbleTest<T> {
+    fn test_high_nibble(&self, value: T) -> bool;
+}
+
+impl BitTest<u8> for u8 {
+    fn test_bitmask(&self, mask: Self) -> bool {
+        (self & mask) == mask
+    }
+}
+
+impl NibbleTest<u8> for u8 {
+    fn test_high_nibble(&self, value: Self) -> bool {
+        (self & 0xF0) == value
+    }
+}

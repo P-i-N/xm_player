@@ -40,7 +40,7 @@ impl Instrument {
         if num_samples > 0 {
             let _sample_header_size = br.read_u32() as usize;
 
-            for i in 0..96 {
+            for _ in 0..96 {
                 let sample_index = br.read_u8() as usize;
                 if sample_index < num_samples {
                     self.sample_keymap.push(sample_index);

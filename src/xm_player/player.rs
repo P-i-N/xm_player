@@ -1,7 +1,4 @@
-use core::arch::x86_64;
 use std::arch::x86_64::_mm256_adds_epi16;
-use std::arch::x86_64::_mm256_loadu_si256;
-use std::arch::x86_64::_mm_loadu_si128;
 use std::ops::BitAnd;
 use std::time::Duration;
 use std::time::Instant;
@@ -107,12 +104,12 @@ impl<'a> Player<'a> {
             s += row.to_colored_string().as_str();
         }
 
+        print!("{:02}{}", self.row_index, s);
+
         println!(
-            "{:02}{}\x1b[0m | CPU: {}us / {:.1}%",
-            self.row_index,
-            s,
+            "\x1b[0m | CPU: {}us / {:.1}%",
             self.row_cpu_duration.as_micros(),
-            self.row_cpu_usage,
+            self.row_cpu_usage
         );
     }
 
@@ -153,8 +150,12 @@ impl<'a> Player<'a> {
 
         let mut pattern_break = false;
 
-        for channel in &self.channels {
-            let row = channel.row;
+        for channel_index in 0..self.channels.len() {
+            let row = self.module.get_channel_row_ordered(
+                self.pattern_order_index,
+                channel_index,
+                self.row_index,
+            );
 
             // Pattern break
             if row.effect_type == 0x0D {
