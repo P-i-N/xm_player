@@ -2,6 +2,7 @@ use core::arch::x86_64;
 use std::arch::x86_64::_mm256_adds_epi16;
 use std::arch::x86_64::_mm256_loadu_si256;
 use std::arch::x86_64::_mm_loadu_si128;
+use std::ops::BitAnd;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -15,7 +16,9 @@ pub struct Player<'a> {
     pub pattern_order_index: usize,
     pub pattern_index: usize,
     pub row_index: usize,
-    pub tick_index: usize,
+
+    // Current tick inside a row, goes from 0 to module.tempo-1
+    pub row_tick: usize,
 
     pub num_generated_samples: usize,
 
@@ -55,7 +58,7 @@ impl<'a> Player<'a> {
             pattern_order_index: 0,
             pattern_index: 0,
             row_index: 0,
-            tick_index: 0,
+            row_tick: 0,
             num_generated_samples: 0,
             loop_count: 0,
             print_rows: false,
@@ -78,7 +81,7 @@ impl<'a> Player<'a> {
         self.pattern_order_index = 0;
         self.pattern_index = 0;
         self.row_index = 0;
-        self.tick_index = 0;
+        self.row_tick = 0;
         self.loop_count = 0;
         self.buffer.fill(0);
         self.mix_buffer.fill(0);
@@ -144,14 +147,43 @@ impl<'a> Player<'a> {
     }
 
     fn step_row(&mut self) {
-        self.pattern_index = self.module.pattern_order[self.pattern_order_index];
-        self.row_index += 1;
-
         self.row_cpu_usage = self.estimate_cpu_usage();
         self.row_cpu_duration = self.get_last_row_cpu_duration();
         self.tick_durations.clear();
 
-        if self.row_index == self.module.patterns[self.pattern_index].num_rows {
+        let mut pattern_break = false;
+
+        for channel in &self.channels {
+            let row = channel.row;
+
+            // Pattern break
+            if row.effect_type == 0x0D {
+                self.pattern_order_index += 1;
+                if self.pattern_order_index >= self.module.pattern_order.len() {
+                    self.pattern_order_index = self.module.restart_position;
+                    self.loop_count += 1;
+                }
+
+                self.pattern_index = self.module.pattern_order[self.pattern_order_index];
+                self.row_index =
+                    ((row.effect_param >> 4) * 10 + row.effect_param.bitand(0x0F)) as usize;
+
+                if self.row_index < self.module.patterns[self.pattern_index].num_rows {
+                    pattern_break = true;
+                }
+            }
+        }
+
+        self.row_tick = 0;
+
+        if pattern_break {
+            return;
+        }
+
+        self.pattern_index = self.module.pattern_order[self.pattern_order_index];
+        self.row_index += 1;
+
+        if self.row_index >= self.module.patterns[self.pattern_index].num_rows {
             self.row_index = 0;
             self.pattern_order_index += 1;
 
@@ -164,7 +196,7 @@ impl<'a> Player<'a> {
     }
 
     fn tick(&mut self) {
-        if (self.tick_index % self.module.tempo) == 0 {
+        if self.row_tick == 0 {
             if self.print_rows {
                 self.print_row();
             }
@@ -184,7 +216,7 @@ impl<'a> Player<'a> {
             let row = self.module.patterns[self.pattern_index].channels[i][self.row_index];
 
             let channel_tick_start = Instant::now();
-            channel.tick(row, self.tick_index % self.module.tempo, &mut self.buffer);
+            channel.tick(row, self.row_tick, &mut self.buffer);
             channels_tick_duration += channel_tick_start.elapsed();
 
             unsafe {
@@ -216,8 +248,8 @@ impl<'a> Player<'a> {
 
         self.num_generated_samples = self.mix_buffer.len();
 
-        self.tick_index += 1;
-        if (self.tick_index % self.module.tempo) == 1 {
+        self.row_tick += 1;
+        if self.row_tick == self.module.tempo {
             self.step_row();
         }
     }

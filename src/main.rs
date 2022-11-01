@@ -6,12 +6,12 @@ mod xm_player;
 use std::error;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let module = xm_player::Module::load("../../song.xm")?;
+    let module = xm_player::Module::load("../../deadlock.xm")?;
 
     let mut player = xm_player::Player::new(&module, 48000);
 
     println!("Benchmarking...");
-    println!("Elapsed time: {}ms", player.benchmark().as_millis());
+    //println!("Elapsed time: {}ms", player.benchmark().as_millis());
 
     //return Ok(());
 

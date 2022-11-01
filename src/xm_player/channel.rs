@@ -39,7 +39,7 @@ fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -
 pub struct Channel<'a> {
     module: &'a Module,
     inv_sample_rate: f32,
-    row: Row,
+    pub row: Row,
     sample: Option<Rc<Sample>>,
     instrument: Option<Rc<Instrument>>,
     note: f32,
@@ -134,7 +134,6 @@ impl<'a> Channel<'a> {
         self.loop_dir_forward = true;
         self.volume_envelope_ticks = 0;
         self.panning_envelope_ticks = 0;
-        self.last_nonzero_effect_param = 0;
 
         // Set initial note volume
         if self.row.volume >= 0x10 && self.row.volume <= 0x50 {
