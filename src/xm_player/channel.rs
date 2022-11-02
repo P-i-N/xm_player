@@ -18,6 +18,12 @@ fn get_note_frequency(period: f32) -> f32 {
     8363.0 * 2.0f32.powf((1152.0 - period) / 192.0)
 }
 
+fn get_period_and_frequency(note: f32) -> (f32, f32) {
+    let period = 1920.0 - note * 16.0;
+    let frequency = 8363.0 * 2.0f32.powf((1152.0 - period) / 192.0);
+    (period, frequency)
+}
+
 fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -> usize {
     if envelope.tick_values.is_empty() {
         return ticks;
@@ -156,7 +162,13 @@ impl<'a> Channel<'a> {
         }
     }
 
-    fn note_on(&mut self) {
+    fn note_on(
+        &mut self,
+        keep_period: bool,
+        keep_volume: bool,
+        keep_position: bool,
+        keep_envelope: bool,
+    ) {
         let instrument = self.instrument.as_ref().unwrap();
         let sample = self.sample.as_ref().unwrap();
 
@@ -194,6 +206,50 @@ impl<'a> Channel<'a> {
         self.note_released = true;
         self.instrument = None;
         self.sample = None;
+    }
+
+    fn tick_new_row(&mut self, row: Row) {
+        let mut trigger_note = true;
+        let mut keep_period = false;
+        let mut keep_volume = false;
+        let mut keep_position = false;
+        let mut keep_envelope = false;
+
+        if row.instrument > 0 {
+            // This one is weird - there is an instrument with portamento
+            if self.row.has_portamento() && self.is_note_active() {
+                keep_period = true;
+                keep_position = true;
+                trigger_note = true;
+            }
+            // Instrument without note - sample position is kept, only envelopes are reset
+            else if row.note == 0 && self.is_note_active() {
+                keep_position = true;
+                trigger_note = true;
+            }
+            // Select new instrument and sample
+            else if let Some(instrument) =
+                self.module.get_instrument(self.row.instrument as usize)
+            {
+                if let Some(sample) = instrument.get_note_sample(self.row.note as usize) {
+                    self.instrument = Some(instrument);
+                    self.sample = Some(sample);
+                } else {
+                    // Invalid note sample (missing?)
+                    self.note_kill();
+                }
+            } else {
+                // Invalid instrument
+                self.note_kill();
+            }
+        }
+
+        if row.has_valid_note() && self.is_note_active() {
+        } else if row.is_note_off() {
+            self.note_off();
+        }
+
+        self.row = row;
     }
 
     fn apply_effects(&mut self, row_tick_index: usize) {
@@ -266,42 +322,8 @@ impl<'a> Channel<'a> {
     }
 
     pub fn tick(&mut self, mut row: Row, row_tick_index: usize, buffer: &mut [i16]) {
-        // Decode note in row
         if row_tick_index == 0 {
-            let mut trigger_note = true;
-            let mut keep_period = false;
-            let mut keep_volume = false;
-            let mut keep_position = false;
-            let mut keep_envelope = false;
-
-            if row.instrument > 0 {
-                if self.row.has_portamento() && self.is_note_active() {
-                    keep_period = true;
-                    keep_position = true;
-                    trigger_note = true;
-                } else if row.note == 0 && self.is_note_active() {
-                    keep_position = true;
-                    trigger_note = true;
-                } else if let Some(instrument) =
-                    self.module.get_instrument(self.row.instrument as usize)
-                {
-                    if let Some(sample) = instrument.get_note_sample_ref(self.row.note as usize) {
-                        self.instrument = Some(instrument);
-                        self.sample = Some(sample);
-                    }
-                } else {
-                    // Invalid instrument
-                    self.note_kill();
-                }
-            }
-
-            self.row = row;
-
-            if row.has_valid_note() && self.is_note_active() {
-                self.note_on();
-            } else if row.is_note_off() {
-                self.note_off();
-            }
+            self.tick_new_row(row);
         }
 
         self.apply_effects(row_tick_index);

@@ -123,7 +123,7 @@ impl Instrument {
         Ok(())
     }
 
-    pub fn get_note_sample_ref(&self, note: usize) -> Option<Rc<Sample>> {
+    pub fn get_note_sample(&self, note: usize) -> Option<Rc<Sample>> {
         if note >= self.sample_keymap.len() {
             None
         } else {
