@@ -11,12 +11,12 @@ pub struct Win32 {
 }
 
 impl Win32 {
-    pub fn create() -> Option<Self> {
+    pub fn create(sample_rate: usize) -> Option<Self> {
         wasapi::initialize_mta().unwrap();
 
         let device = wasapi::get_default_device(&Direction::Render).unwrap();
         let mut audio_client = device.get_iaudioclient().unwrap();
-        let format = wasapi::WaveFormat::new(16, 16, &SampleType::Int, 48000, 2);
+        let format = wasapi::WaveFormat::new(16, 16, &SampleType::Int, sample_rate, 2);
         let block_size = format.get_blockalign() as usize;
         let (def_time, _) = audio_client.get_periods().unwrap();
 
@@ -47,7 +47,9 @@ impl Win32 {
 
 impl AudioInterface for Win32 {
     fn get_available_samples(&self) -> usize {
-        self.audio_client.get_available_space_in_frames().unwrap() as usize * self.block_size / 2
+        let result = self.audio_client.get_available_space_in_frames().unwrap() as usize
+            * (self.block_size / 2);
+        result - (result % self.block_size)
     }
 
     fn wait(&self) -> bool {

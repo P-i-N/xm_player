@@ -85,7 +85,7 @@ impl Sample {
                 let mut acc: i8 = 0;
                 for i in 0..self.data.len() {
                     (acc, _) = acc.overflowing_add(br.read_i8());
-                    self.data[i] = (acc as i16) * 16;
+                    self.data[i] = (acc as i16) * 255;
                 }
             }
         } else {

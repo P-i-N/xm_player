@@ -6,9 +6,9 @@ mod xm_player;
 use std::error;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let module = xm_player::Module::load("../../unreal.xm")?;
+    let module = xm_player::Module::load("../../alf.xm")?;
 
-    let mut player = xm_player::Player::new(&module, 48000);
+    let mut player = xm_player::Player::new(&module, 48000, 1);
 
     println!("Benchmarking...");
     //println!("Elapsed time: {}ms", player.benchmark().as_millis());
@@ -17,7 +17,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     player.print_rows = true;
 
-    let audio_iface = audio_interface::create_audio_interface().unwrap();
+    let audio_iface = audio_interface::create_audio_interface(player.sample_rate).unwrap();
     let mut buffer = [0 as i16; 48000 * 2];
 
     while audio_iface.wait() {

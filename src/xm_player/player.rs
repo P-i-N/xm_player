@@ -9,6 +9,7 @@ use super::Module;
 pub struct Player<'a> {
     pub module: &'a Module,
     pub sample_rate: usize,
+    pub oversample: usize,
     pub samples_per_tick: usize,
     pub pattern_order_index: usize,
     pub pattern_index: usize,
@@ -18,6 +19,9 @@ pub struct Player<'a> {
     pub row_tick: usize,
 
     pub num_generated_samples: usize,
+
+    // Repeat current pattern
+    pub loop_current_pattern: bool,
 
     // How many times song looped - might be incorrect for some
     // modules with complicated pattern jump commands
@@ -45,18 +49,20 @@ pub struct Player<'a> {
 }
 
 impl<'a> Player<'a> {
-    pub fn new(module: &'a Module, sample_rate: usize) -> Player {
-        let samples_per_tick = ((sample_rate * 2500) / module.bpm) / 1000;
+    pub fn new(module: &'a Module, sample_rate: usize, oversample: usize) -> Player {
+        let samples_per_tick = (((sample_rate * 2500) / module.bpm) / 1000) * oversample;
 
         let mut result = Player {
             module,
             sample_rate: sample_rate,
+            oversample,
             samples_per_tick,
-            pattern_order_index: 1,
+            pattern_order_index: 0,
             pattern_index: 0,
             row_index: 0,
             row_tick: 0,
             num_generated_samples: 0,
+            loop_current_pattern: false,
             loop_count: 0,
             print_rows: false,
             channels: Vec::new(),
@@ -67,9 +73,13 @@ impl<'a> Player<'a> {
             row_cpu_usage: 0.0,
         };
 
-        for _ in 0..module.num_channels {
-            result.channels.push(Channel::new(module, sample_rate));
+        for index in 0..module.num_channels {
+            result
+                .channels
+                .push(Channel::new(module, index, oversample * sample_rate));
         }
+
+        //result.solo_channel(9);
 
         result
     }
@@ -101,7 +111,11 @@ impl<'a> Player<'a> {
                 s += "\x1b[0m | ";
             }
 
-            s += row.to_colored_string().as_str();
+            if !self.channels[i].mute {
+                s += row.to_colored_string().as_str();
+            } else {
+                s += "           ";
+            }
         }
 
         print!("{:02}{}", self.row_index, s);
@@ -121,8 +135,8 @@ impl<'a> Player<'a> {
         }
 
         // Tick duration in microseconds
-        let tick_duration =
-            (1000000.0 * (self.samples_per_tick as f32)) / (self.sample_rate as f32);
+        let tick_duration = (1000000.0 * (self.samples_per_tick as f32))
+            / ((self.oversample * self.sample_rate) as f32);
 
         (result / (tick_duration * (self.tick_durations.len() as f32))) * 100.0
     }
@@ -186,7 +200,10 @@ impl<'a> Player<'a> {
 
         if self.row_index >= self.module.patterns[self.pattern_index].num_rows {
             self.row_index = 0;
-            self.pattern_order_index += 1;
+
+            if !self.loop_current_pattern {
+                self.pattern_order_index += 1;
+            }
 
             if self.pattern_order_index >= self.module.pattern_order.len() {
                 self.pattern_order_index = self.module.restart_position;
@@ -247,7 +264,7 @@ impl<'a> Player<'a> {
         self.tick_durations.push(time_start.elapsed());
         //self.tick_durations.push(channels_tick_duration);
 
-        self.num_generated_samples = self.mix_buffer.len();
+        self.num_generated_samples = self.mix_buffer.len() / self.oversample;
 
         self.row_tick += 1;
         if self.row_tick == self.module.tempo {
@@ -265,9 +282,24 @@ impl<'a> Player<'a> {
                     output.len() - num_filled_samples,
                 );
 
-                let src = &self.mix_buffer[self.mix_buffer.len() - self.num_generated_samples..];
-                output[num_filled_samples..num_filled_samples + to_copy]
-                    .copy_from_slice(&src[0..to_copy]);
+                let src = &self.mix_buffer
+                    [self.mix_buffer.len() - self.oversample * self.num_generated_samples..];
+
+                if self.oversample == 1 {
+                    output[num_filled_samples..num_filled_samples + to_copy]
+                        .copy_from_slice(&src[0..to_copy]);
+                } else {
+                    for i in 0..to_copy {
+                        let mut acc = 0i32;
+
+                        let off = ((i - (i % 2)) * self.oversample) + (i % 2);
+                        for j in (off..off + 2 * self.oversample).step_by(2) {
+                            acc += src[j] as i32;
+                        }
+
+                        output[num_filled_samples + i] = (acc / (self.oversample as i32)) as i16;
+                    }
+                }
 
                 self.num_generated_samples -= to_copy;
                 num_filled_samples += to_copy;
@@ -279,13 +311,25 @@ impl<'a> Player<'a> {
         num_filled_samples
     }
 
+    pub fn solo_channel(&mut self, channel_index: usize) {
+        for channel in &mut self.channels {
+            channel.mute = channel.index != channel_index;
+        }
+    }
+
+    pub fn unmute_all(&mut self) {
+        for channel in &mut self.channels {
+            channel.mute = false;
+        }
+    }
+
     pub fn benchmark(&mut self) -> Duration {
         let time_start = Instant::now();
         let prev_print_rows = self.print_rows;
         self.print_rows = false;
         self.loop_count = 0;
 
-        let mut buffer = Vec::<i16>::with_capacity(self.sample_rate * 2);
+        let mut buffer = Vec::<i16>::with_capacity(self.oversample * self.sample_rate * 2);
         buffer.resize(buffer.capacity(), 0);
 
         while self.loop_count == 0 {

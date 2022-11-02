@@ -34,7 +34,7 @@ fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -
         return ticks;
     }
 
-    if !note_released {
+    if !note_released && envelope.sustain != usize::MAX {
         if ticks < envelope.sustain as usize {
             ticks += 1
         }
@@ -50,8 +50,10 @@ fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -
 
 pub struct Channel<'a> {
     module: &'a Module,
+    pub index: usize,
+    pub mute: bool,
     inv_sample_rate: f32,
-    pub row: Row,
+    row: Row,
     sample: Option<Rc<Sample>>,
     instrument: Option<Rc<Instrument>>,
     note: f32,
@@ -112,9 +114,11 @@ macro_rules! render_samples {
 }
 
 impl<'a> Channel<'a> {
-    pub fn new(module: &'a Module, sample_rate: usize) -> Self {
+    pub fn new(module: &'a Module, index: usize, sample_rate: usize) -> Self {
         Channel {
             module,
+            index,
+            mute: false,
             inv_sample_rate: 1.0 / (sample_rate as f32),
             row: Row::default(),
             sample: None,
@@ -184,11 +188,11 @@ impl<'a> Channel<'a> {
             }
 
             self.note_panning = sample.panning as usize;
-            self.volume_envelope_ticks = 0;
-            self.panning_envelope_ticks = 0;
 
-            /*
-             */
+            if !keep_envelope {
+                self.volume_envelope_ticks = 0;
+                self.panning_envelope_ticks = 0;
+            }
         }
     }
 
@@ -208,14 +212,6 @@ impl<'a> Channel<'a> {
         let mut keep_volume = false;
         let mut keep_position = false;
         let mut keep_envelope = false;
-
-        /*
-        // ?!
-        if self.row.has_portamento() && self.is_note_active() {
-            keep_period = true;
-            keep_position = true;
-        }
-        */
 
         if row.instrument > 0 {
             // Instrument without note - sample position is kept, only envelopes are reset
@@ -245,8 +241,9 @@ impl<'a> Channel<'a> {
         if row.has_valid_note() && self.is_note_active() {
             if row.has_portamento() {
                 keep_period = true;
-                keep_volume = true;
-                keep_position = true;
+                //keep_volume = true;
+                keep_position = !self.note_released;
+                keep_envelope = !self.note_released;
             }
 
             self.note_on(
@@ -351,12 +348,15 @@ impl<'a> Channel<'a> {
                 &instrument.panning_envelope,
             );
 
-            let panning = 4
+            let mut panning = (self.note_panning as i32) - 128;
+
+            panning += 4
                 * (instrument
                     .panning_envelope
-                    .get_value(self.panning_envelope_ticks) as usize);
+                    .get_value(self.panning_envelope_ticks) as i32)
+                - 128;
 
-            //self.final_panning =
+            self.final_panning = (panning.clamp(-128, 128) + 128).clamp(0, 255) as usize;
         }
     }
 
@@ -365,6 +365,11 @@ impl<'a> Channel<'a> {
     }
 
     pub fn tick(&mut self, mut row: Row, row_tick_index: usize, buffer: &mut [i16]) {
+        if self.mute {
+            buffer.fill(0);
+            return;
+        }
+
         if row_tick_index == 0 {
             self.tick_new_row(row);
         }
@@ -380,8 +385,8 @@ impl<'a> Channel<'a> {
             let mut vr = self.final_panning.clamp(0, 255) as i32;
             let mut vl = 255 - vr;
 
-            vr = (vr * (self.final_volume as i32)) / 64;
-            vl = (vl * (self.final_volume as i32)) / 64;
+            vr = (vr * (self.final_volume as i32)) / 128;
+            vl = (vl * (self.final_volume as i32)) / 128;
 
             unsafe {
                 let (_, bufferi32, _) = buffer.align_to_mut::<i32>();

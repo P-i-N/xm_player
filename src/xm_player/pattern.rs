@@ -2,7 +2,7 @@ use std::error;
 
 use super::{BinaryReader, BitTest, NibbleTest};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Row {
     pub note: u8,
     pub instrument: u8,
@@ -11,41 +11,29 @@ pub struct Row {
     pub effect_param: u8,
 }
 
-impl Default for Row {
-    fn default() -> Self {
-        Row {
-            note: 0x80,
-            instrument: 0,
-            volume: 0,
-            effect_type: 0,
-            effect_param: 0,
-        }
-    }
-}
-
 impl Row {
     pub fn to_colored_string(&self) -> String {
-        if self.note >= 0x80 {
-            return format!("\x1b[30m...     ");
-        } else if self.note == 96 {
-            return format!("\x1b[0;37m== .....");
-        }
-
-        static NOTES: &'static str = "CCDDEFFGGAAB";
-        static SHARP: &'static str = "-#-#--#-#-#-";
-        let note_index = (self.note % 12) as usize;
-        let octave = 1 + (self.note / 12) as usize;
-
         let mut result = String::new();
 
         // Note
-        result += format!(
-            "\x1b[37;1m{}{}{}",
-            NOTES.chars().nth(note_index).unwrap(),
-            SHARP.chars().nth(note_index).unwrap(),
-            octave
-        )
-        .as_str();
+        if self.has_valid_note() {
+            static NOTES: &'static str = "CCDDEFFGGAAB";
+            static SHARP: &'static str = "-#-#--#-#-#-";
+            let note_index = ((self.note - 1) % 12) as usize;
+            let octave = 1 + ((self.note - 1) / 12) as usize;
+
+            result += format!(
+                "\x1b[37;1m{}{}{}",
+                NOTES.chars().nth(note_index).unwrap(),
+                SHARP.chars().nth(note_index).unwrap(),
+                octave
+            )
+            .as_str();
+        } else if self.is_note_off() {
+            result += "== ";
+        } else {
+            result += "...";
+        }
 
         // Instrument
         if self.instrument > 0 {
@@ -58,23 +46,42 @@ impl Row {
         if self.volume >= 0x10 && self.volume <= 0x50 {
             result += format!("\x1b[32mv{:02}", self.volume - 16).as_str();
         }
-        // Slide down
-        else if self.volume.test_bitmask(0x60) {
+        // Volume slide down
+        else if self.volume.test_high_nibble(0x60) {
             result += format!("\x1b[32md{:02}", self.volume & 0x0F).as_str();
         }
-        // Slide up
-        else if self.volume.test_bitmask(0x70) {
+        // Volume slide up
+        else if self.volume.test_high_nibble(0x70) {
             result += format!("\x1b[32mc{:02}", self.volume & 0x0F).as_str();
         }
         // Fine slide down
-        else if self.volume.test_bitmask(0x80) {
+        else if self.volume.test_high_nibble(0x80) {
             result += format!("\x1b[32mb{:02}", self.volume & 0x0F).as_str();
         }
         // Fine slide up
-        else if self.volume.test_bitmask(0x90) {
+        else if self.volume.test_high_nibble(0x90) {
             result += format!("\x1b[32ma{:02}", self.volume & 0x0F).as_str();
+        }
+        // Portamento
+        else if self.volume.test_high_nibble(0xF0) {
+            result += format!("\x1b[35mg{:02}", self.volume & 0x0F).as_str();
         } else {
             result += "   ";
+        }
+
+        // Arrpegio
+        if self.effect_type == 0x00 && self.effect_param > 0 {
+            result += format!("\x1b[31;1m0{:02X}", self.effect_param).as_str();
+        }
+        // Tone portamento
+        else if self.effect_type == 0x03 {
+            result += format!("\x1b[35;1m3{:02X}", self.effect_param).as_str();
+        }
+        // Set panning
+        else if self.effect_type == 0x08 {
+            result += format!("\x1b[33;1m3{:02X}", self.effect_param).as_str();
+        } else {
+            result += "\x1b[30;1m...";
         }
 
         result
@@ -116,6 +123,7 @@ impl Pattern {
         let mut i: usize = 0;
         let mut line: usize = 0;
         let mut channel: usize = 0;
+        let mut last_effect_type = 0xFFu8;
 
         while i < packed_data_size {
             let note = br.read_u8();
