@@ -48,7 +48,11 @@ impl Row {
         .as_str();
 
         // Instrument
-        result += format!("\x1b[34m{:02}", self.instrument).as_str();
+        if self.instrument > 0 {
+            result += format!("\x1b[34m{:02}", self.instrument).as_str();
+        } else {
+            result += "  ";
+        }
 
         // Volume effect
         if self.volume >= 0x10 && self.volume <= 0x50 {

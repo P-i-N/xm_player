@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::ops::BitAnd;
 use std::rc::Rc;
 
@@ -10,11 +9,7 @@ use super::NibbleTest;
 use super::Row;
 use super::Sample;
 
-fn get_note_period(note: f32) -> f32 {
-    1920.0 - note * 16.0
-}
-
-fn get_note_frequency(period: f32) -> f32 {
+fn get_frequency(period: f32) -> f32 {
     8363.0 * 2.0f32.powf((1152.0 - period) / 192.0)
 }
 
@@ -22,6 +17,16 @@ fn get_period_and_frequency(note: f32) -> (f32, f32) {
     let period = 1920.0 - note * 16.0;
     let frequency = 8363.0 * 2.0f32.powf((1152.0 - period) / 192.0);
     (period, frequency)
+}
+
+fn slide_towards(mut value: f32, target: f32, step: f32) -> f32 {
+    if value < target {
+        value = target.min(value + step);
+    } else if value > target {
+        value = target.max(value - step);
+    }
+
+    value
 }
 
 fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -> usize {
@@ -136,66 +141,55 @@ impl<'a> Channel<'a> {
         self.instrument.is_some() && self.sample.is_some()
     }
 
-    fn tn(
-        &mut self,
-        keep_period: bool,
-        keep_volume: bool,
-        keep_position: bool,
-        keep_envelope: bool,
-    ) {
-        if !keep_period {
-            self.note_period = get_note_period(self.note as f32);
-            self.note_frequency = get_note_frequency(self.note_period);
-        }
-
-        if !keep_position {
-            self.sample_offset = 0.0;
-            self.loop_dir_forward = true;
-        }
-
-        if let Some(sample) = self.sample.clone() {
-            if !keep_volume {
-                self.note_volume = sample.volume as usize;
-            }
-
-            self.note_panning = sample.panning as usize;
+    fn get_active_instrument_with_sample(&self) -> Option<(Rc<Instrument>, Rc<Sample>)> {
+        if self.instrument.is_some() && self.sample.is_some() {
+            Some((
+                self.instrument.as_ref().unwrap().clone(),
+                self.sample.as_ref().unwrap().clone(),
+            ))
+        } else {
+            None
         }
     }
 
     fn note_on(
         &mut self,
+        note: u8,
         keep_period: bool,
         keep_volume: bool,
         keep_position: bool,
         keep_envelope: bool,
     ) {
-        let instrument = self.instrument.as_ref().unwrap();
-        let sample = self.sample.as_ref().unwrap();
+        if let Some((instrument, sample)) = self.get_active_instrument_with_sample() {
+            self.note = sample.get_adjusted_note(note);
 
-        self.note =
-            self.row.note as f32 + sample.relative_note as f32 + (sample.finetune as f32) / 128.0;
-        self.note_period = get_note_period(self.note as f32);
-        self.note_target_period = 0.0;
-        self.note_frequency = get_note_frequency(self.note_period);
-        self.note_step = self.note_frequency * self.inv_sample_rate;
-        self.note_volume = sample.volume as usize;
-        self.note_panning = sample.panning as usize;
-        self.note_released = false;
-        self.loop_dir_forward = true;
-        self.volume_envelope_ticks = 0;
-        self.panning_envelope_ticks = 0;
+            if keep_period {
+                (self.note_target_period, self.note_frequency) =
+                    get_period_and_frequency(self.note);
+            } else {
+                (self.note_period, self.note_frequency) = get_period_and_frequency(self.note);
+                self.note_target_period = self.note_period;
+            }
 
-        // Set initial note volume
-        if self.row.volume >= 0x10 && self.row.volume <= 0x50 {
-            self.note_volume *= (self.row.volume - 16) as usize;
-            self.note_volume /= 64;
+            self.note_step = self.note_frequency * self.inv_sample_rate;
+
+            if !keep_volume {
+                self.note_volume = sample.volume as usize;
+            }
+
+            if !keep_position {
+                self.sample_offset = 0.0;
+                self.note_released = false;
+                self.loop_dir_forward = true;
+            }
+
+            self.note_panning = sample.panning as usize;
+            self.volume_envelope_ticks = 0;
+            self.panning_envelope_ticks = 0;
+
+            /*
+             */
         }
-        // Set initial note panning
-        else if self.row.volume >= 0xC0 && self.row.volume <= 0xCF {
-            self.note_panning = ((self.row.volume & 0x0F) * 17) as usize;
-        }
-
-        self.sample_offset = 0.0;
     }
 
     fn note_off(&mut self) {
@@ -215,23 +209,25 @@ impl<'a> Channel<'a> {
         let mut keep_position = false;
         let mut keep_envelope = false;
 
+        /*
+        // ?!
+        if self.row.has_portamento() && self.is_note_active() {
+            keep_period = true;
+            keep_position = true;
+        }
+        */
+
         if row.instrument > 0 {
-            // This one is weird - there is an instrument with portamento
-            if self.row.has_portamento() && self.is_note_active() {
-                keep_period = true;
-                keep_position = true;
-                trigger_note = true;
-            }
             // Instrument without note - sample position is kept, only envelopes are reset
-            else if row.note == 0 && self.is_note_active() {
+            if row.note == 0 && self.is_note_active() {
                 keep_position = true;
                 trigger_note = true;
             }
             // Select new instrument and sample
             else if let Some(instrument) =
-                self.module.get_instrument(self.row.instrument as usize)
+                self.module.get_instrument((row.instrument - 1) as usize)
             {
-                if let Some(sample) = instrument.get_note_sample(self.row.note as usize) {
+                if let Some(sample) = instrument.get_note_sample(row.note as usize) {
                     self.instrument = Some(instrument);
                     self.sample = Some(sample);
                 } else {
@@ -242,14 +238,43 @@ impl<'a> Channel<'a> {
                 // Invalid instrument
                 self.note_kill();
             }
+        } else {
+            keep_volume = true;
         }
 
         if row.has_valid_note() && self.is_note_active() {
+            if row.has_portamento() {
+                keep_period = true;
+                keep_volume = true;
+                keep_position = true;
+            }
+
+            self.note_on(
+                row.note,
+                keep_period,
+                keep_volume,
+                keep_position,
+                keep_envelope,
+            );
         } else if row.is_note_off() {
             self.note_off();
         }
 
         self.row = row;
+    }
+
+    fn apply_volume(&mut self, row_tick_index: usize) {
+        if row_tick_index == 0 {
+            // Set initial note volume
+            if self.row.volume >= 0x10 && self.row.volume <= 0x50 {
+                self.note_volume *= (self.row.volume - 16) as usize;
+                self.note_volume /= 64;
+            }
+            // Set initial note panning
+            else if self.row.volume >= 0xC0 && self.row.volume <= 0xCF {
+                self.note_panning = ((self.row.volume & 0x0F) * 17) as usize;
+            }
+        }
     }
 
     fn apply_effects(&mut self, row_tick_index: usize) {
@@ -291,6 +316,17 @@ impl<'a> Channel<'a> {
             _ => {}
         }
 
+        if self.note_period != self.note_target_period {
+            self.note_period = slide_towards(
+                self.note_period,
+                self.note_target_period,
+                1.0 * (self.last_nonzero_effect_param as f32),
+            );
+
+            self.note_frequency = get_frequency(self.note_period);
+            self.note_step = self.note_frequency * self.inv_sample_rate;
+        }
+
         self.final_volume = self.note_volume;
         self.final_panning = self.note_panning;
     }
@@ -314,6 +350,13 @@ impl<'a> Channel<'a> {
                 self.note_released,
                 &instrument.panning_envelope,
             );
+
+            let panning = 4
+                * (instrument
+                    .panning_envelope
+                    .get_value(self.panning_envelope_ticks) as usize);
+
+            //self.final_panning =
         }
     }
 
@@ -326,6 +369,7 @@ impl<'a> Channel<'a> {
             self.tick_new_row(row);
         }
 
+        self.apply_volume(row_tick_index);
         self.apply_effects(row_tick_index);
         self.tick_envelopes();
 

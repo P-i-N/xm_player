@@ -52,7 +52,7 @@ impl<'a> Player<'a> {
             module,
             sample_rate: sample_rate,
             samples_per_tick,
-            pattern_order_index: 0,
+            pattern_order_index: 1,
             pattern_index: 0,
             row_index: 0,
             row_tick: 0,

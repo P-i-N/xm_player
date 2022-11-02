@@ -22,7 +22,7 @@ pub struct Sample {
     pub volume: u8,
     pub panning: u8,
     pub relative_note: i8,
-    pub finetune: i8,
+    pub finetune: f32,
 }
 
 impl Sample {
@@ -34,7 +34,7 @@ impl Sample {
         result.loop_start = br.read_u32() as f32;
         result.loop_end = result.loop_start + (br.read_u32() as f32);
         result.volume = br.read_u8();
-        result.finetune = br.read_u8() as i8;
+        result.finetune = (br.read_i8() as f32) / 128.0;
 
         let flags = br.read_u8();
 
@@ -56,7 +56,7 @@ impl Sample {
         result.sample_end = sample_length as f32;
 
         result.panning = br.read_u8();
-        result.relative_note = br.read_u8() as i8;
+        result.relative_note = br.read_i8();
 
         let compression_type = br.read_u8();
 
@@ -94,5 +94,9 @@ impl Sample {
         }
 
         Ok(())
+    }
+
+    pub fn get_adjusted_note(&self, note: u8) -> f32 {
+        note as f32 + (self.relative_note as f32) + self.finetune - 1.0
     }
 }
