@@ -79,7 +79,9 @@ impl<'a> Player<'a> {
                 .push(Channel::new(module, index, oversample * sample_rate));
         }
 
-        //result.solo_channel(9);
+        //result.solo_channel(0);
+        //result.pattern_order_index = 5;
+        //result.loop_current_pattern = true;
 
         result
     }

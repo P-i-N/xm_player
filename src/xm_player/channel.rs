@@ -1,4 +1,5 @@
 use std::ops::BitAnd;
+use std::ops::Shr;
 use std::rc::Rc;
 
 use super::Envelope;
@@ -27,6 +28,10 @@ fn slide_towards(mut value: f32, target: f32, step: f32) -> f32 {
     }
 
     value
+}
+
+fn get_vibrato_period(ticks: usize) -> f32 {
+    -(std::f32::consts::TAU * (ticks as f32 / 64.0)).sin()
 }
 
 fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -> usize {
@@ -67,6 +72,10 @@ pub struct Channel<'a> {
     loop_dir_forward: bool,
     volume_envelope_ticks: usize,
     panning_envelope_ticks: usize,
+    vibrato_speed: u8,
+    vibrato_depth: u8,
+    vibrato_ticks: usize,
+    vibrato_note_offset: f32,
     last_nonzero_effect_param: u8,
     sample_offset: f32,
     final_volume: usize,
@@ -134,6 +143,10 @@ impl<'a> Channel<'a> {
             loop_dir_forward: true,
             volume_envelope_ticks: 0,
             panning_envelope_ticks: 0,
+            vibrato_speed: 0,
+            vibrato_depth: 0,
+            vibrato_ticks: 0,
+            vibrato_note_offset: 0.0,
             last_nonzero_effect_param: 0,
             sample_offset: 0.0,
             final_volume: 0,
@@ -188,10 +201,12 @@ impl<'a> Channel<'a> {
             }
 
             self.note_panning = sample.panning as usize;
+            self.vibrato_note_offset = 0.0;
 
             if !keep_envelope {
                 self.volume_envelope_ticks = 0;
                 self.panning_envelope_ticks = 0;
+                self.vibrato_ticks = 0;
             }
         }
     }
@@ -207,7 +222,6 @@ impl<'a> Channel<'a> {
     }
 
     fn tick_new_row(&mut self, row: Row) {
-        let mut trigger_note = true;
         let mut keep_period = false;
         let mut keep_volume = false;
         let mut keep_position = false;
@@ -217,7 +231,6 @@ impl<'a> Channel<'a> {
             // Instrument without note - sample position is kept, only envelopes are reset
             if row.note == 0 && self.is_note_active() {
                 keep_position = true;
-                trigger_note = true;
             }
             // Select new instrument and sample
             else if let Some(instrument) =
@@ -260,6 +273,12 @@ impl<'a> Channel<'a> {
         self.row = row;
     }
 
+    fn apply_vibrato(&mut self) {
+        self.vibrato_ticks += self.vibrato_speed as usize;
+        self.vibrato_note_offset =
+            -2.0f32 * get_vibrato_period(self.vibrato_ticks) * (self.vibrato_depth as f32 / 15.0);
+    }
+
     fn apply_volume(&mut self, row_tick_index: usize) {
         if row_tick_index == 0 {
             // Set initial note volume
@@ -275,6 +294,8 @@ impl<'a> Channel<'a> {
     }
 
     fn apply_effects(&mut self, row_tick_index: usize) {
+        let mut cancel_vibrato = true;
+
         // Volume slide down (or fine slide down)
         if self.row.volume.test_high_nibble(0x60)
             || (self.row.volume.test_high_nibble(0x80) && row_tick_index == 0)
@@ -310,6 +331,22 @@ impl<'a> Channel<'a> {
             0x03 => {
                 //
             }
+            // Vibrato
+            0x04 => {
+                let depth = self.row.effect_param.bitand(0x0F);
+                let speed = self.row.effect_param.shr(4) as u8;
+
+                if depth > 0 {
+                    self.vibrato_depth = depth;
+                }
+
+                if speed > 0 {
+                    self.vibrato_speed = speed;
+                }
+
+                self.apply_vibrato();
+                cancel_vibrato = false;
+            }
             _ => {}
         }
 
@@ -319,10 +356,14 @@ impl<'a> Channel<'a> {
                 self.note_target_period,
                 1.0 * (self.last_nonzero_effect_param as f32),
             );
-
-            self.note_frequency = get_frequency(self.note_period);
-            self.note_step = self.note_frequency * self.inv_sample_rate;
         }
+
+        if cancel_vibrato {
+            self.vibrato_note_offset = 0.0;
+        }
+
+        self.note_frequency = get_frequency(self.note_period - 16.0 * self.vibrato_note_offset);
+        self.note_step = self.note_frequency * self.inv_sample_rate;
 
         self.final_volume = self.note_volume;
         self.final_panning = self.note_panning;

@@ -69,7 +69,7 @@ impl Row {
             result += "   ";
         }
 
-        // Arrpegio
+        // Arpeggio
         if self.effect_type == 0x00 && self.effect_param > 0 {
             result += format!("\x1b[31;1m0{:02X}", self.effect_param).as_str();
         }
@@ -80,6 +80,10 @@ impl Row {
         // Set panning
         else if self.effect_type == 0x08 {
             result += format!("\x1b[33;1m3{:02X}", self.effect_param).as_str();
+        }
+        // Set volume
+        else if self.effect_type == 0x0C {
+            result += format!("\x1b[32mv{:02X}", self.effect_param).as_str();
         } else {
             result += "\x1b[30;1m...";
         }
