@@ -29,6 +29,9 @@ pub use player::Player;
 mod binary_reader;
 use binary_reader::BinaryReader;
 
+use super::platform;
+use platform::PlatformInterface;
+
 ///////////////////////////////////////////////////////////////////////////////
 
 type Fixed = fixed::FixedU32x<16>;

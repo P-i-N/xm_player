@@ -5,9 +5,11 @@ use std::time::Instant;
 
 use super::Channel;
 use super::Module;
+use super::PlatformInterface;
 
-pub struct Player<'a> {
+pub struct Player<'a, 'b> {
     pub module: &'a Module,
+    pub platform: &'b dyn PlatformInterface,
     pub sample_rate: usize,
     pub oversample: usize,
     pub samples_per_tick: usize,
@@ -48,12 +50,18 @@ pub struct Player<'a> {
     row_cpu_usage: f32,
 }
 
-impl<'a> Player<'a> {
-    pub fn new(module: &'a Module, sample_rate: usize, oversample: usize) -> Player {
+impl<'a, 'b> Player<'a, 'b> {
+    pub fn new(
+        module: &'a Module,
+        platform: &'b dyn PlatformInterface,
+        sample_rate: usize,
+        oversample: usize,
+    ) -> Player<'a, 'b> {
         let samples_per_tick = (((sample_rate * 2500) / module.bpm) / 1000) * oversample;
 
         let mut result = Player {
             module,
+            platform,
             sample_rate: sample_rate,
             oversample,
             samples_per_tick,
@@ -235,32 +243,14 @@ impl<'a> Player<'a> {
             self.pattern_index = self.module.pattern_order[self.pattern_order_index];
             let row = self.module.patterns[self.pattern_index].channels[i][self.row_index];
 
-            let channel_tick_start = Instant::now();
             channel.tick(row, self.row_tick, &mut self.buffer);
+
+            let channel_tick_start = Instant::now();
+
+            self.platform
+                .audio_stereo_mix(&self.buffer, &mut self.mix_buffer, 256, 256);
+
             channels_tick_duration += channel_tick_start.elapsed();
-
-            unsafe {
-                let steps = if self.buffer.len() >= 16 {
-                    (self.buffer.len() - 15) / 16
-                } else {
-                    0
-                };
-
-                let mut src = self.buffer.as_ptr() as *const core::arch::x86_64::__m256i;
-                let mut dst = self.mix_buffer.as_mut_ptr() as *mut core::arch::x86_64::__m256i;
-
-                for _ in 0..steps {
-                    *dst = _mm256_adds_epi16(*src, *dst);
-
-                    src = src.add(1);
-                    dst = dst.add(1);
-                }
-
-                for i in (steps * 16)..self.buffer.len() {
-                    let dst = self.mix_buffer.get_unchecked_mut(i);
-                    *dst = dst.saturating_add(*self.buffer.get_unchecked(i));
-                }
-            }
         }
 
         //self.tick_durations.push(time_start.elapsed());

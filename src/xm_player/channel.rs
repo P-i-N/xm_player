@@ -435,14 +435,16 @@ impl<'a> Channel<'a> {
                             if (offset as usize) != o {
                                 $test;
                                 o = offset as usize;
-                                v = *sample.data.get_unchecked(o) as i32;
-                                v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
-                                    | ((v.saturating_mul(vr).unchecked_shr(8)).unchecked_shl(16));
+                                v = (*sample.data.get_unchecked(o) as i32) & 0x0000FFFF;
+                                //v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
+                                //    | ((v.saturating_mul(vr).unchecked_shr(8)).unchecked_shl(16));
                             }
 
                             *dst = v;
                             dst = dst.add(1);
                         }
+
+                        self.sample_offset = offset;
                     };
                 }
 
@@ -491,22 +493,24 @@ impl<'a> Channel<'a> {
                 }
 
                 if use_fast_path {
+                    /*
                     urender_samples!({
                         sample_ptr = sample_ptr.add(1);
                     });
+                    */
+                    render_samples!({});
                 } else {
                     match sample.loop_type {
                         LoopType::None => {
                             bufferi32.fill(0);
 
-                            /*
                             render_samples!({
                                 if offset >= sample.sample_end {
                                     break;
                                 }
                             });
-                            */
 
+                            /*
                             let sample_end_fp = Fixed::new_f32(sample.sample_end);
 
                             urender_samples!({
@@ -516,19 +520,18 @@ impl<'a> Channel<'a> {
                                     sample_ptr = sample_ptr.add(1);
                                 }
                             });
+                            */
 
                             self.note_kill();
                         }
-                        // Orig benchmark time: 323ms
                         LoopType::Forward => {
-                            /*
                             render_samples!({
                                 if offset >= sample.loop_end {
                                     offset = sample.loop_start;
                                 }
                             });
-                            */
 
+                            /*
                             let loop_end_fp = Fixed::new_f32(sample.loop_end);
 
                             urender_samples!({
@@ -539,6 +542,7 @@ impl<'a> Channel<'a> {
                                     sample_ptr = sample_ptr.add(1);
                                 }
                             });
+                            */
                         }
                         LoopType::PingPong => {
                             for f in bufferi32 {
