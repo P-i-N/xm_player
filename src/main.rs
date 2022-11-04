@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let mut player = xm_player::Player::new(&module, 48000, 1);
 
     println!("Benchmarking...");
-    //println!("Elapsed time: {}ms", player.benchmark().as_millis());
+    println!("Elapsed time: {}ms", player.benchmark().as_millis());
 
     //return Ok(());
 

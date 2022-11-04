@@ -263,8 +263,8 @@ impl<'a> Player<'a> {
             }
         }
 
-        self.tick_durations.push(time_start.elapsed());
-        //self.tick_durations.push(channels_tick_duration);
+        //self.tick_durations.push(time_start.elapsed());
+        self.tick_durations.push(channels_tick_duration);
 
         self.num_generated_samples = self.mix_buffer.len() / self.oversample;
 

@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+mod fixed;
+
 mod module;
 pub use module::Module;
 
@@ -28,6 +30,8 @@ mod binary_reader;
 use binary_reader::BinaryReader;
 
 ///////////////////////////////////////////////////////////////////////////////
+
+type Fixed = fixed::FixedU32x<16>;
 
 #[derive(Debug)]
 pub struct FormatError {

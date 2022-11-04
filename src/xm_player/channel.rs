@@ -3,6 +3,7 @@ use std::ops::Shr;
 use std::rc::Rc;
 
 use super::Envelope;
+use super::Fixed;
 use super::Instrument;
 use super::LoopType;
 use super::Module;
@@ -68,6 +69,7 @@ pub struct Channel<'a> {
     note_target_period: f32,
     note_frequency: f32,
     note_step: f32,
+    note_step_fp: Fixed,
     note_released: bool,
     loop_dir_forward: bool,
     volume_envelope_ticks: usize,
@@ -78,48 +80,9 @@ pub struct Channel<'a> {
     vibrato_note_offset: f32,
     last_nonzero_effect_param: u8,
     sample_offset: f32,
+    sample_offset_fp: Fixed,
     final_volume: usize,
     final_panning: usize,
-}
-
-macro_rules! render_samples {
-    ($buffer:ident, $sample:ident, $offset:ident, $volume_left:expr, $volume_right:expr, $step:expr, $test:block) => {
-        let mut dst = $buffer.as_mut_ptr();
-        let end = dst.add($buffer.len());
-
-        if ($step) < 1.0 {
-            let mut v = 0;
-            let mut o = usize::MAX;
-
-            // Step back
-            $offset -= $step;
-
-            while dst < end {
-                $offset += $step;
-                if ($offset as usize) != o {
-                    $test;
-                    o = $offset as usize;
-                    v = *$sample.data.get_unchecked(o) as i32;
-                    v = ((v.unchecked_mul($volume_left).unchecked_shr(8)) & 0x0000FFFF)
-                        | ((v.saturating_mul($volume_right).unchecked_shr(8)).unchecked_shl(16));
-                }
-
-                *dst = v;
-                dst = dst.add(1);
-            }
-        } else {
-            while dst < end {
-                let v = *$sample.data.get_unchecked($offset as usize) as i32;
-                *dst = ((v.unchecked_mul($volume_left).unchecked_shr(8)) & 0x0000FFFF)
-                    | ((v.saturating_mul($volume_right).unchecked_shr(8)).unchecked_shl(16));
-
-                $offset += $step;
-                $test;
-
-                dst = dst.add(1);
-            }
-        }
-    };
 }
 
 impl<'a> Channel<'a> {
@@ -139,6 +102,7 @@ impl<'a> Channel<'a> {
             note_target_period: 0.0,
             note_frequency: 0.0,
             note_step: 0.0,
+            note_step_fp: Fixed::default(),
             note_released: false,
             loop_dir_forward: true,
             volume_envelope_ticks: 0,
@@ -149,6 +113,7 @@ impl<'a> Channel<'a> {
             vibrato_note_offset: 0.0,
             last_nonzero_effect_param: 0,
             sample_offset: 0.0,
+            sample_offset_fp: Fixed::default(),
             final_volume: 0,
             final_panning: 0,
         }
@@ -189,6 +154,7 @@ impl<'a> Channel<'a> {
             }
 
             self.note_step = self.note_frequency * self.inv_sample_rate;
+            self.note_step_fp = Fixed::new_f32(self.note_step);
 
             if !keep_volume {
                 self.note_volume = sample.volume as usize;
@@ -196,6 +162,7 @@ impl<'a> Channel<'a> {
 
             if !keep_position {
                 self.sample_offset = 0.0;
+                self.sample_offset_fp = Fixed::new_u32(0);
                 self.note_released = false;
                 self.loop_dir_forward = true;
             }
@@ -364,6 +331,7 @@ impl<'a> Channel<'a> {
 
         self.note_frequency = get_frequency(self.note_period - 16.0 * self.vibrato_note_offset);
         self.note_step = self.note_frequency * self.inv_sample_rate;
+        self.note_step_fp = Fixed::new_f32(self.note_step);
 
         self.final_volume = self.note_volume;
         self.final_panning = self.note_panning;
@@ -421,7 +389,9 @@ impl<'a> Channel<'a> {
 
         if let Some(sample) = self.sample.clone() {
             let mut offset = self.sample_offset;
+            let mut offset_fp = self.sample_offset_fp;
             let step = self.note_step;
+            let step_fp = self.note_step_fp;
 
             let mut vr = self.final_panning.clamp(0, 255) as i32;
             let mut vl = 255 - vr;
@@ -431,10 +401,12 @@ impl<'a> Channel<'a> {
 
             unsafe {
                 let (_, bufferi32, _) = buffer.align_to_mut::<i32>();
+                let mut sample_ptr = sample.data.as_ptr().add(usize::from(offset_fp));
 
                 // Can we use fast path for mixing? Using fast path means we can safely forward the sample
                 // on every buffer element and not worry about hitting loop boundaries.
-                let use_fast_path = match sample.loop_type {
+
+                let mut use_fast_path = match sample.loop_type {
                     LoopType::None => {
                         (offset + (bufferi32.len() as f32) * step) < sample.sample_end
                     }
@@ -447,16 +419,101 @@ impl<'a> Channel<'a> {
                     }
                 };
 
+                macro_rules! render_samples {
+                    ($test:block) => {
+                        let mut dst = bufferi32.as_mut_ptr();
+                        let end = dst.add(bufferi32.len());
+
+                        let mut v = 0;
+                        let mut o = usize::MAX;
+
+                        // Step back
+                        offset -= step;
+
+                        while dst < end {
+                            offset += step;
+                            if (offset as usize) != o {
+                                $test;
+                                o = offset as usize;
+                                v = *sample.data.get_unchecked(o) as i32;
+                                v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
+                                    | ((v.saturating_mul(vr).unchecked_shr(8)).unchecked_shl(16));
+                            }
+
+                            *dst = v;
+                            dst = dst.add(1);
+                        }
+                    };
+                }
+
+                macro_rules! urender_samples {
+                    ($test:block) => {
+                        let mut dst = bufferi32.as_mut_ptr();
+                        let end = dst.add(bufferi32.len());
+
+                        let mut v = *sample_ptr as i32;
+                        v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
+                            | ((v.saturating_mul(vr).unchecked_shr(8)).unchecked_shl(16));
+
+                        if step_fp.integer == 0 {
+                            while dst < end {
+                                if offset_fp.add_fract_mut(step_fp.fract) {
+                                    offset_fp.integer = offset_fp.integer.unchecked_add(1);
+                                    $test;
+
+                                    v = *sample_ptr as i32;
+                                    v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
+                                        | ((v.saturating_mul(vr).unchecked_shr(8))
+                                            .unchecked_shl(16));
+                                }
+
+                                *dst = v;
+                                dst = dst.add(1);
+                            }
+                        } else {
+                            while dst < end {
+                                offset_fp.add_mut(&step_fp);
+                                offset_fp.integer = offset_fp.integer.unchecked_add(1);
+                                $test;
+
+                                v = *sample_ptr as i32;
+                                v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
+                                    | ((v.saturating_mul(vr).unchecked_shr(8)).unchecked_shl(16));
+
+                                *dst = v;
+                                dst = dst.add(1);
+                            }
+                        }
+
+                        self.sample_offset_fp = offset_fp;
+                        self.sample_offset = f32::from(offset_fp);
+                    };
+                }
+
                 if use_fast_path {
-                    render_samples!(bufferi32, sample, offset, vl, vr, step, {});
+                    urender_samples!({
+                        sample_ptr = sample_ptr.add(1);
+                    });
                 } else {
                     match sample.loop_type {
                         LoopType::None => {
                             bufferi32.fill(0);
 
-                            render_samples!(bufferi32, sample, offset, vl, vr, step, {
+                            /*
+                            render_samples!({
                                 if offset >= sample.sample_end {
                                     break;
+                                }
+                            });
+                            */
+
+                            let sample_end_fp = Fixed::new_f32(sample.sample_end);
+
+                            urender_samples!({
+                                if offset_fp.integer >= sample_end_fp.integer {
+                                    break;
+                                } else {
+                                    sample_ptr = sample_ptr.add(1);
                                 }
                             });
 
@@ -464,9 +521,22 @@ impl<'a> Channel<'a> {
                         }
                         // Orig benchmark time: 323ms
                         LoopType::Forward => {
-                            render_samples!(bufferi32, sample, offset, vl, vr, step, {
+                            /*
+                            render_samples!({
                                 if offset >= sample.loop_end {
                                     offset = sample.loop_start;
+                                }
+                            });
+                            */
+
+                            let loop_end_fp = Fixed::new_f32(sample.loop_end);
+
+                            urender_samples!({
+                                if offset_fp.integer >= loop_end_fp.integer {
+                                    offset_fp = Fixed::new_u32(sample.loop_start as u32);
+                                    sample_ptr = sample.data.as_ptr().add(usize::from(offset_fp));
+                                } else {
+                                    sample_ptr = sample_ptr.add(1);
                                 }
                             });
                         }
@@ -492,8 +562,6 @@ impl<'a> Channel<'a> {
                         }
                     }
                 }
-
-                self.sample_offset = offset;
             }
         }
         // No active sample playing on this channel right now
