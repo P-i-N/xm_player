@@ -1,5 +1,20 @@
-use std::error::Error;
-use std::fmt;
+#![no_std]
+#![feature(unchecked_math)]
+#![feature(stdsimd)]
+#![feature(error_in_core)]
+#![feature(core_intrinsics)]
+
+extern crate alloc;
+extern crate core;
+
+use alloc::boxed::Box;
+use alloc::rc::Rc;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::error::Error;
+use core::fmt::Display;
+use core::intrinsics::*;
+use core::time::Duration;
 
 mod fixed;
 
@@ -29,10 +44,30 @@ pub use player::Player;
 mod binary_reader;
 use binary_reader::BinaryReader;
 
-use super::platform;
-use platform::PlatformInterface;
+mod platform;
+pub use platform::PlatformInterface;
 
 ///////////////////////////////////////////////////////////////////////////////
+
+mod math {
+    use core::intrinsics::{floorf32, powf32, sinf32};
+
+    pub fn fract(value: f32) -> f32 {
+        unsafe { value - floorf32(value) }
+    }
+
+    pub fn floor(value: f32) -> f32 {
+        unsafe { floorf32(value) }
+    }
+
+    pub fn pow(value: f32, exponent: f32) -> f32 {
+        unsafe { powf32(value, exponent) }
+    }
+
+    pub fn sin(value: f32) -> f32 {
+        unsafe { sinf32(value) }
+    }
+}
 
 type Fixed = fixed::FixedU32x<16>;
 
@@ -44,7 +79,7 @@ pub struct FormatError {
 impl FormatError {
     pub fn new(details: &str) -> FormatError {
         FormatError {
-            details: details.to_string(),
+            details: String::new(),
         }
     }
 }
@@ -55,9 +90,9 @@ impl Error for FormatError {
     }
 }
 
-impl fmt::Display for FormatError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.details)
+impl Display for FormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        Ok(())
     }
 }
 

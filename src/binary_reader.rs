@@ -1,4 +1,6 @@
-use std::mem::transmute;
+extern crate core;
+
+use core::mem::transmute;
 
 pub struct BinaryReader<'a> {
     pub data: &'a [u8],
@@ -50,30 +52,5 @@ impl<'a> BinaryReader<'a> {
 
         self.pos += 4;
         value
-    }
-
-    pub fn read_string_segment(&mut self, segment_length: usize) -> String {
-        if self.pos + segment_length - 1 >= self.data.len() {
-            String::default()
-        } else {
-            let slice = &self.data[self.pos..self.pos + segment_length];
-
-            // We have to iterate every byte and strictly convert to ASCII, because
-            // some modules have f*cked up sample & instrument names, that do not
-            // map nicely to UTF-8 strings
-            let value =
-                String::from_iter(slice.iter().map(
-                    |&ch| {
-                        if ch < 128 {
-                            ch as char
-                        } else {
-                            32 as char
-                        }
-                    },
-                ));
-
-            self.pos += segment_length;
-            value
-        }
     }
 }

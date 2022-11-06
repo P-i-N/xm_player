@@ -10,6 +10,16 @@
 			"problemMatcher": [
 				"$rustc"
 			],
+		},
+		{
+			"label": "rust: cargo build stm32",
+			"group": "build",
+			"type": "cargo",
+			"command": "build",
+			"args": [ "--target=thumbv7em-none-eabihf" ],
+			"problemMatcher": [
+				"$rustc"
+			],
 		}
 	]
 }

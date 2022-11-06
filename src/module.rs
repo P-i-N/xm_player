@@ -1,7 +1,4 @@
-use std::error;
-use std::fs::File;
-use std::io::Read;
-use std::rc::Rc;
+use super::{Box, Error, Rc, Vec};
 
 use super::BinaryReader;
 use super::FormatError;
@@ -9,37 +6,36 @@ use super::Instrument;
 use super::Pattern;
 use super::Row;
 
-#[derive(Default)]
-pub struct Module {
-    pub name: String,
-    pub tracker: String,
-    pub version: i32,
+pub struct Module<'a> {
+    pub data: &'a [u8],
     pub patterns: Vec<Pattern>,
     pub pattern_order: Vec<usize>,
     pub instruments: Vec<Rc<Instrument>>,
     pub restart_position: usize,
     pub num_instruments: usize,
     pub num_channels: usize,
-    pub linear_freq_table: bool,
     pub tempo: usize,
     pub bpm: usize,
 }
 
-impl Module {
-    pub fn load(path: &str) -> Result<Module, Box<dyn error::Error>> {
-        let mut file = File::open(path)?;
-        let mut _data = Vec::new();
-        file.read_to_end(&mut _data)?;
+impl<'a> Module<'a> {
+    pub fn from_memory(data: &'a [u8]) -> Result<Module, Box<dyn Error>> {
+        let mut br = BinaryReader::new(data);
 
-        let data = _data;
-        let mut br = BinaryReader::new(&data);
+        // Skip ID text
+        br.pos += 17;
 
-        // ID text
-        if br.read_string_segment(17) != "Extended Module: " {
-            return Err(Box::new(FormatError::new("Invalid ID text")));
-        }
-
-        let mut result = Module::default();
+        let mut result = Module {
+            data,
+            patterns: Vec::new(),
+            pattern_order: Vec::new(),
+            instruments: Vec::new(),
+            restart_position: 0,
+            num_instruments: 0,
+            num_channels: 0,
+            tempo: 0,
+            bpm: 0,
+        };
 
         result.parse_header(&mut br)?;
 
@@ -86,20 +82,20 @@ impl Module {
         self.patterns[pattern_index].get_channel_row(channel_index, row_index)
     }
 
-    fn parse_header(&mut self, br: &mut BinaryReader) -> Result<(), Box<dyn error::Error>> {
-        // Module name
-        self.name = br.read_string_segment(20).trim().to_string();
+    fn parse_header(&mut self, br: &mut BinaryReader) -> Result<(), Box<dyn Error>> {
+        // Skip module name
+        br.pos += 20;
 
         // 0x1A separator
         if br.read_u8() != 0x1A {
             return Err(Box::new(FormatError::new("Invalid XM header")));
         }
 
-        // Tracker name
-        self.tracker = br.read_string_segment(20).trim().to_string();
+        // Skip tracker name
+        br.pos += 20;
 
-        // Module version
-        self.version = br.read_u16() as i32;
+        // Skip module version
+        br.pos += 2;
 
         let header_size = br.read_u32() as usize;
 
@@ -122,8 +118,8 @@ impl Module {
 
         self.num_instruments = br.read_u16() as usize;
 
-        // Usage of linear frequency table
-        self.linear_freq_table = br.read_u16() == 1;
+        // Skip linear frequency table flag
+        br.pos += 2;
 
         // Tempo and BPM
         self.tempo = br.read_u16() as usize;

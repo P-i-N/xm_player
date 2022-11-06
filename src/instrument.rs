@@ -1,5 +1,6 @@
-use std::error;
-use std::rc::Rc;
+use super::Box;
+use super::Error;
+use super::Vec;
 
 use super::BinaryReader;
 use super::Envelope;
@@ -7,8 +8,7 @@ use super::Sample;
 
 #[derive(Default)]
 pub struct Instrument {
-    pub name: String,
-    pub samples: Vec<Rc<Sample>>,
+    pub samples: Vec<Sample>,
     pub sample_keymap: Vec<usize>,
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
@@ -19,7 +19,7 @@ pub struct Instrument {
 }
 
 impl Instrument {
-    pub fn parse(&mut self, br: &mut BinaryReader) -> Result<(), Box<dyn error::Error>> {
+    pub fn parse(&mut self, br: &mut BinaryReader) -> Result<(), Box<dyn Error>> {
         let mut instrument_size = br.read_u32() as usize;
         if instrument_size == 0 || instrument_size > 263 {
             instrument_size = 263;
@@ -27,7 +27,8 @@ impl Instrument {
 
         let skip_pos = br.pos + instrument_size - 4;
 
-        self.name = br.read_string_segment(22).trim().to_string();
+        // Skip instrument name
+        br.pos += 22;
 
         // Instrument type, no meaning
         br.read_u8();
@@ -105,8 +106,7 @@ impl Instrument {
                 // Seek binary reader to start of sample header
                 br.pos = first_sample_header_pos + i * 40;
 
-                self.samples
-                    .push(Rc::new(Sample::new(br, sample_data_pos)?));
+                self.samples.push(Sample::new(br, sample_data_pos)?);
 
                 // Current binary reader position is start of next sample data position
                 sample_data_pos = br.pos;
@@ -123,16 +123,11 @@ impl Instrument {
         Ok(())
     }
 
-    pub fn get_note_sample(&self, note: usize) -> Option<Rc<Sample>> {
+    pub fn has_sample_for_note(&self, note: usize) -> bool {
         if note >= self.sample_keymap.len() {
-            None
+            false
         } else {
-            let sample_index = self.sample_keymap[note];
-            if sample_index == usize::MAX {
-                None
-            } else {
-                Some(self.samples[sample_index].clone())
-            }
+            self.sample_keymap[note] != usize::MAX
         }
     }
 }

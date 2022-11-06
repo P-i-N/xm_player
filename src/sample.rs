@@ -1,7 +1,4 @@
-use std::error;
-
-use super::BinaryReader;
-use super::FormatError;
+use super::{math::*, BinaryReader, Box, Error, FormatError, String, Vec};
 
 #[derive(Clone, Default)]
 pub enum LoopType {
@@ -26,7 +23,7 @@ pub struct Sample {
 }
 
 impl Sample {
-    pub fn new(br: &mut BinaryReader, data_pos: usize) -> Result<Sample, Box<dyn error::Error>> {
+    pub fn new(br: &mut BinaryReader, data_pos: usize) -> Result<Sample, Box<dyn Error>> {
         let mut result = Sample::default();
 
         let mut sample_length = br.read_u32() as usize;
@@ -41,8 +38,8 @@ impl Sample {
         let is_16bit = (flags & 0b10000) != 0;
         if is_16bit {
             sample_length >>= 1;
-            result.loop_start = (result.loop_start / 2.0).floor();
-            result.loop_end = (result.loop_end / 2.0).floor();
+            result.loop_start = floor(result.loop_start / 2.0);
+            result.loop_end = floor(result.loop_end / 2.0);
         }
 
         result.loop_type = match flags & 0x3 {
@@ -60,7 +57,8 @@ impl Sample {
 
         let compression_type = br.read_u8();
 
-        result.name = br.read_string_segment(22).trim().to_string();
+        // Skip sample name
+        br.pos += 22;
 
         br.pos = data_pos;
         result.read_samples(br, compression_type == 0xAD, is_16bit)?;
@@ -73,7 +71,7 @@ impl Sample {
         br: &mut BinaryReader,
         adpcm: bool,
         is_16bit: bool,
-    ) -> Result<(), Box<dyn error::Error>> {
+    ) -> Result<(), Box<dyn Error>> {
         if !adpcm {
             if is_16bit {
                 let mut acc: i16 = 0;

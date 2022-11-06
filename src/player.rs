@@ -1,18 +1,20 @@
-use std::arch::x86_64::_mm256_adds_epi16;
-use std::ops::BitAnd;
-use std::time::Duration;
-use std::time::Instant;
+use super::{Channel, Duration, Module, NibbleTest, PlatformInterface, String, Vec};
 
-use super::Channel;
-use super::Module;
-use super::PlatformInterface;
+#[derive(Clone, Copy)]
+pub struct SongState {
+    pub bpm: usize,
+    pub tempo: usize,
+}
 
 pub struct Player<'a, 'b> {
-    pub module: &'a Module,
+    pub module: &'a Module<'a>,
     pub platform: &'b dyn PlatformInterface,
     pub sample_rate: usize,
     pub oversample: usize,
     pub samples_per_tick: usize,
+
+    pub song_state: SongState,
+
     pub pattern_order_index: usize,
     pub pattern_index: usize,
     pub row_index: usize,
@@ -34,10 +36,10 @@ pub struct Player<'a, 'b> {
 
     channels: Vec<Channel<'a>>,
 
-    // Individual channels are rendered there each tick
-    buffer: Vec<i16>,
+    // Individual channels are rendered there each tick - mono
+    channel_buffer: Vec<i32>,
 
-    // Mix of all channels for each tick
+    // Mix of all channels for each tick - stereo
     mix_buffer: Vec<i16>,
 
     // For calculating CPU usage
@@ -50,6 +52,10 @@ pub struct Player<'a, 'b> {
     row_cpu_usage: f32,
 }
 
+fn get_samples_per_tick(sample_rate: usize, bpm: usize, oversample: usize) -> usize {
+    (((sample_rate * 2500) / bpm) / 1000) * oversample
+}
+
 impl<'a, 'b> Player<'a, 'b> {
     pub fn new(
         module: &'a Module,
@@ -57,7 +63,7 @@ impl<'a, 'b> Player<'a, 'b> {
         sample_rate: usize,
         oversample: usize,
     ) -> Player<'a, 'b> {
-        let samples_per_tick = (((sample_rate * 2500) / module.bpm) / 1000) * oversample;
+        let samples_per_tick = get_samples_per_tick(sample_rate, module.bpm, oversample);
 
         let mut result = Player {
             module,
@@ -65,6 +71,10 @@ impl<'a, 'b> Player<'a, 'b> {
             sample_rate: sample_rate,
             oversample,
             samples_per_tick,
+            song_state: SongState {
+                bpm: module.bpm,
+                tempo: module.tempo,
+            },
             pattern_order_index: 0,
             pattern_index: 0,
             row_index: 0,
@@ -74,8 +84,8 @@ impl<'a, 'b> Player<'a, 'b> {
             loop_count: 0,
             print_rows: false,
             channels: Vec::new(),
-            buffer: vec![0; samples_per_tick * 2],
-            mix_buffer: vec![0; samples_per_tick * 2],
+            channel_buffer: Vec::with_capacity(samples_per_tick),
+            mix_buffer: Vec::with_capacity(samples_per_tick * 2),
             tick_durations: Vec::new(),
             row_cpu_duration: Duration::ZERO,
             row_cpu_usage: 0.0,
@@ -100,7 +110,7 @@ impl<'a, 'b> Player<'a, 'b> {
         self.row_index = 0;
         self.row_tick = 0;
         self.loop_count = 0;
-        self.buffer.fill(0);
+        self.channel_buffer.fill(0);
         self.mix_buffer.fill(0);
 
         for channel in &mut self.channels {
@@ -108,6 +118,7 @@ impl<'a, 'b> Player<'a, 'b> {
         }
     }
 
+    /*
     fn print_row(&self) {
         let mut s = String::new();
 
@@ -136,6 +147,7 @@ impl<'a, 'b> Player<'a, 'b> {
             self.row_cpu_usage
         );
     }
+    */
 
     fn estimate_cpu_usage(&self) -> f32 {
         let mut result = 0.0f32;
@@ -156,7 +168,7 @@ impl<'a, 'b> Player<'a, 'b> {
             return Duration::ZERO;
         }
 
-        let num_items = usize::min(self.tick_durations.len(), self.module.tempo);
+        let num_items = usize::min(self.tick_durations.len(), self.song_state.tempo);
         let slice = &self.tick_durations[self.tick_durations.len() - num_items..];
 
         let mut result = Duration::ZERO;
@@ -181,21 +193,49 @@ impl<'a, 'b> Player<'a, 'b> {
                 self.row_index,
             );
 
-            // Pattern break
-            if row.effect_type == 0x0D {
-                self.pattern_order_index += 1;
-                if self.pattern_order_index >= self.module.pattern_order.len() {
-                    self.pattern_order_index = self.module.restart_position;
-                    self.loop_count += 1;
+            match row.effect_type {
+                // Pattern break
+                0x0D => {
+                    self.pattern_order_index += 1;
+                    if self.pattern_order_index >= self.module.pattern_order.len() {
+                        self.pattern_order_index = self.module.restart_position;
+                        self.loop_count += 1;
+                    }
+
+                    self.pattern_index = self.module.pattern_order[self.pattern_order_index];
+                    self.row_index =
+                        ((row.effect_param >> 4) * 10 + row.effect_param & 0x0F) as usize;
+
+                    if self.row_index < self.module.patterns[self.pattern_index].num_rows {
+                        pattern_break = true;
+                    }
                 }
 
-                self.pattern_index = self.module.pattern_order[self.pattern_order_index];
-                self.row_index =
-                    ((row.effect_param >> 4) * 10 + row.effect_param.bitand(0x0F)) as usize;
+                // Set module BPM/tempo
+                0x0F => {
+                    // Set tempo
+                    if row.effect_param.test_high_nibble(0) {
+                        self.song_state.tempo = row.effect_param as usize;
+                    }
+                    // Set BPM
+                    else {
+                        self.song_state.bpm = row.effect_param as usize;
+                    }
 
-                if self.row_index < self.module.patterns[self.pattern_index].num_rows {
-                    pattern_break = true;
+                    let samples_per_tick = get_samples_per_tick(
+                        self.sample_rate,
+                        self.song_state.bpm,
+                        self.oversample,
+                    );
+
+                    if samples_per_tick != self.samples_per_tick {
+                        self.channel_buffer.resize(samples_per_tick, 0);
+                        self.mix_buffer.resize(samples_per_tick * 2, 0);
+                        self.samples_per_tick = samples_per_tick;
+                    }
                 }
+
+                _ => (),
             }
         }
 
@@ -226,11 +266,11 @@ impl<'a, 'b> Player<'a, 'b> {
     fn tick(&mut self) {
         if self.row_tick == 0 {
             if self.print_rows {
-                self.print_row();
+                //self.print_row();
             }
         }
 
-        let time_start = Instant::now();
+        //let time_start = self.platform.get_time_us();
 
         // Clear 32bit mix buffer
         self.mix_buffer.fill(0);
@@ -243,23 +283,34 @@ impl<'a, 'b> Player<'a, 'b> {
             self.pattern_index = self.module.pattern_order[self.pattern_order_index];
             let row = self.module.patterns[self.pattern_index].channels[i][self.row_index];
 
-            channel.tick(row, self.row_tick, &mut self.buffer);
+            //let channel_tick_start = self.platform.get_time_us();
 
-            let channel_tick_start = Instant::now();
+            let (vl, vr) = channel.tick(
+                row,
+                &self.song_state,
+                self.row_tick,
+                &mut self.channel_buffer,
+            );
 
-            self.platform
-                .audio_stereo_mix(&self.buffer, &mut self.mix_buffer, 256, 256);
+            //channels_tick_duration += channel_tick_start.elapsed();
 
-            channels_tick_duration += channel_tick_start.elapsed();
+            if vl > 0 && vr > 0 {
+                self.platform.audio_mono2stereo_mix(
+                    &self.channel_buffer,
+                    &mut self.mix_buffer,
+                    vl as i32,
+                    vr as i32,
+                );
+            }
         }
 
         //self.tick_durations.push(time_start.elapsed());
-        self.tick_durations.push(channels_tick_duration);
+        //self.tick_durations.push(channels_tick_duration);
 
         self.num_generated_samples = self.mix_buffer.len() / self.oversample;
 
         self.row_tick += 1;
-        if self.row_tick == self.module.tempo {
+        if self.row_tick >= self.song_state.tempo {
             self.step_row();
         }
     }
@@ -269,7 +320,7 @@ impl<'a, 'b> Player<'a, 'b> {
 
         while num_filled_samples < output.len() {
             if self.num_generated_samples > 0 {
-                let to_copy = std::cmp::min(
+                let to_copy = core::cmp::min(
                     self.num_generated_samples,
                     output.len() - num_filled_samples,
                 );
@@ -316,7 +367,7 @@ impl<'a, 'b> Player<'a, 'b> {
     }
 
     pub fn benchmark(&mut self) -> Duration {
-        let time_start = Instant::now();
+        //let time_start = Instant::now();
         let prev_print_rows = self.print_rows;
         self.print_rows = false;
         self.loop_count = 0;
@@ -330,6 +381,8 @@ impl<'a, 'b> Player<'a, 'b> {
 
         self.reset();
         self.print_rows = prev_print_rows;
-        time_start.elapsed()
+        //time_start.elapsed()
+
+        Duration::ZERO
     }
 }
