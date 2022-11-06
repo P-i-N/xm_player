@@ -1,12 +1,19 @@
 #[cfg(target_os = "windows")]
-use win32::Win32;
+use win32::Win32 as Platform;
+
+#[cfg(target_os = "linux")]
+use ::xm_player::DummyInterface as Platform;
+use xm_player::PlatformInterface;
 
 use std::error;
 
-use ::xm_player::platform::*;
 use ::xm_player::Module;
 use ::xm_player::Player;
 
+extern crate core;
+use core::include_bytes;
+
+/*
 fn row_to_colored_string(row: &Row) -> String {
     let mut result = String::new();
 
@@ -85,10 +92,13 @@ fn row_to_colored_string(row: &Row) -> String {
 
     result
 }
+ */
 
 fn main() -> Result<(), Box<dyn error::Error>> {
+    let embedded_data = include_bytes!("../unreal.xm");
+
     const SAMPLE_RATE: usize = 48000;
-    let platform = Win32::new(SAMPLE_RATE);
+    let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());
 
     let file_data = std::fs::read("../../unreal.xm")?;
 

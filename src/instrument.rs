@@ -1,6 +1,7 @@
 use super::Box;
 use super::Error;
 use super::Vec;
+use super::Rc;
 
 use super::BinaryReader;
 use super::Envelope;
@@ -8,7 +9,7 @@ use super::Sample;
 
 #[derive(Default)]
 pub struct Instrument {
-    pub samples: Vec<Sample>,
+    pub samples: Vec<Rc<Sample>>,
     pub sample_keymap: Vec<usize>,
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
@@ -106,7 +107,7 @@ impl Instrument {
                 // Seek binary reader to start of sample header
                 br.pos = first_sample_header_pos + i * 40;
 
-                self.samples.push(Sample::new(br, sample_data_pos)?);
+                self.samples.push(Rc::new(Sample::new(br, sample_data_pos)?));
 
                 // Current binary reader position is start of next sample data position
                 sample_data_pos = br.pos;
@@ -123,11 +124,11 @@ impl Instrument {
         Ok(())
     }
 
-    pub fn has_sample_for_note(&self, note: usize) -> bool {
-        if note >= self.sample_keymap.len() {
-            false
+    pub fn get_sample_for_note(&self, note: usize) -> Option<Rc<Sample>> {
+        if note < self.sample_keymap.len() && self.sample_keymap[note] != usize::MAX {
+            Some(self.samples[self.sample_keymap[note]].clone())
         } else {
-            self.sample_keymap[note] != usize::MAX
+            None
         }
     }
 }

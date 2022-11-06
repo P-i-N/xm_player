@@ -15,8 +15,12 @@ pub trait PlatformInterface {
     );
 }
 
-pub struct DummyInterface {
-    //
+pub struct DummyInterface {}
+
+impl DummyInterface {
+    pub fn new(_sample_rate: usize) -> Option<Self> {
+        Some(Self {})
+    }
 }
 
 impl PlatformInterface for DummyInterface {

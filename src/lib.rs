@@ -13,7 +13,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::error::Error;
 use core::fmt::Display;
-use core::intrinsics::*;
 use core::time::Duration;
 
 mod fixed;
@@ -45,6 +44,7 @@ mod binary_reader;
 use binary_reader::BinaryReader;
 
 mod platform;
+pub use platform::DummyInterface;
 pub use platform::PlatformInterface;
 
 ///////////////////////////////////////////////////////////////////////////////

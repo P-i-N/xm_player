@@ -6,6 +6,7 @@ use super::Instrument;
 use super::LoopType;
 use super::Module;
 use super::NibbleTest;
+use super::Rc;
 use super::Row;
 use super::Sample;
 
@@ -63,8 +64,8 @@ pub struct Channel<'a> {
     pub mute: bool,
     inv_sample_rate: f32,
     row: Row,
-    sample_index: usize,
-    instrument_index: usize,
+    sample: Option<Rc<Sample>>,
+    instrument: Option<Rc<Instrument>>,
     note: f32,
     note_volume: usize,
     note_panning: usize,
@@ -97,8 +98,8 @@ impl<'a> Channel<'a> {
             mute: false,
             inv_sample_rate: 1.0 / (sample_rate as f32),
             row: Row::default(),
-            sample_index: usize::MAX,
-            instrument_index: usize::MAX,
+            sample: None,
+            instrument: None,
             note: 0.0,
             note_volume: 0,
             note_panning: 0,
@@ -124,57 +125,50 @@ impl<'a> Channel<'a> {
     }
 
     fn is_note_active(&self) -> bool {
-        self.instrument_index != usize::MAX && self.sample_index != usize::MAX
-    }
-
-    fn get_active_sample(&'a self) -> Option<&'a Sample> {
-        if self.is_note_active() {
-            let instrument = &self.module.instruments[self.instrument_index];
-            Some(&instrument.samples[self.sample_index])
-        } else {
-            None
-        }
+        self.instrument.is_some() && self.sample.is_some()
     }
 
     fn note_on(
         &mut self,
-        sample: &Sample,
         note: u8,
         keep_period: bool,
         keep_volume: bool,
         keep_position: bool,
         keep_envelope: bool,
     ) {
-        self.note = sample.get_adjusted_note(note);
+        if let Some(sample) = &self.sample {
+            self.note = sample.get_adjusted_note(note);
 
-        if keep_period {
-            (self.note_target_period, self.note_frequency) = get_period_and_frequency(self.note);
-        } else {
-            (self.note_period, self.note_frequency) = get_period_and_frequency(self.note);
-            self.note_target_period = self.note_period;
-        }
+            if keep_period {
+                (self.note_target_period, self.note_frequency) =
+                    get_period_and_frequency(self.note);
+            } else {
+                (self.note_period, self.note_frequency) = get_period_and_frequency(self.note);
+                self.note_target_period = self.note_period;
+            }
 
-        self.note_step = self.note_frequency * self.inv_sample_rate;
-        self.note_step_fp = Fixed::new_f32(self.note_step);
+            self.note_step = self.note_frequency * self.inv_sample_rate;
+            self.note_step_fp = Fixed::new_f32(self.note_step);
 
-        if !keep_volume {
-            self.note_volume = sample.volume as usize;
-        }
+            if !keep_volume {
+                self.note_volume = sample.volume as usize;
+            }
 
-        if !keep_position {
-            self.sample_offset = 0.0;
-            self.sample_offset_fp = Fixed::new_u32(0);
-            self.note_released = false;
-            self.loop_dir_forward = true;
-        }
+            if !keep_position {
+                self.sample_offset = 0.0;
+                self.sample_offset_fp = Fixed::new_u32(0);
+                self.note_released = false;
+                self.loop_dir_forward = true;
+            }
 
-        self.note_panning = sample.panning as usize;
-        self.vibrato_note_offset = 0.0;
+            self.note_panning = sample.panning as usize;
+            self.vibrato_note_offset = 0.0;
 
-        if !keep_envelope {
-            self.volume_envelope_ticks = 0;
-            self.panning_envelope_ticks = 0;
-            self.vibrato_ticks = 0;
+            if !keep_envelope {
+                self.volume_envelope_ticks = 0;
+                self.panning_envelope_ticks = 0;
+                self.vibrato_ticks = 0;
+            }
         }
     }
 
@@ -184,8 +178,8 @@ impl<'a> Channel<'a> {
 
     fn note_kill(&mut self) {
         self.note_released = true;
-        self.instrument_index = usize::MAX;
-        self.sample_index = usize::MAX;
+        self.instrument = None;
+        self.sample = None;
     }
 
     fn tick_new_row(&mut self, row: Row) {
@@ -200,11 +194,12 @@ impl<'a> Channel<'a> {
                 keep_position = true;
             }
             // Select new instrument and sample
-            else if row.instrument as usize <= self.module.instruments.len() {
-                let instrument = self.module.instruments[(row.instrument - 1) as usize].as_ref();
-                if instrument.has_sample_for_note(row.note as usize) {
-                    self.instrument_index = (row.instrument - 1) as usize;
-                    self.sample_index = instrument.sample_keymap[row.note as usize];
+            else if let Some(instrument) =
+                self.module.get_instrument((row.instrument - 1) as usize)
+            {
+                if let Some(sample) = instrument.get_sample_for_note(row.note as usize) {
+                    self.instrument = Some(instrument);
+                    self.sample = Some(sample);
                 } else {
                     // Invalid note sample (missing?)
                     self.note_kill();
@@ -225,16 +220,13 @@ impl<'a> Channel<'a> {
                 keep_envelope = !self.note_released;
             }
 
-            if let Some(sample) = self.get_active_sample() {
-                self.note_on(
-                    sample,
-                    row.note,
-                    keep_period,
-                    keep_volume,
-                    keep_position,
-                    keep_envelope,
-                );
-            }
+            self.note_on(
+                row.note,
+                keep_period,
+                keep_volume,
+                keep_position,
+                keep_envelope,
+            );
         } else if row.is_note_off() {
             self.note_off();
         }
@@ -340,9 +332,7 @@ impl<'a> Channel<'a> {
     }
 
     fn tick_envelopes(&mut self) {
-        if self.instrument_index != usize::MAX {
-            let instrument = &self.module.instruments[self.instrument_index];
-
+        if let Some(instrument) = &self.instrument {
             self.volume_envelope_ticks = follow_envelope(
                 self.volume_envelope_ticks,
                 self.note_released,
@@ -413,7 +403,7 @@ impl<'a> Channel<'a> {
             return (0, 0);
         }
 
-        if let Some(sample) = self.get_active_sample() {
+        if let Some(sample) = &self.sample {
             let mut offset = self.sample_offset;
             let mut offset_fp = self.sample_offset_fp;
             let step = self.note_step;
