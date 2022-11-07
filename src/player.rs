@@ -91,6 +91,12 @@ impl<'a, 'b> Player<'a, 'b> {
             row_cpu_usage: 0.0,
         };
 
+        result
+            .channel_buffer
+            .resize(result.channel_buffer.capacity(), 0);
+
+        result.mix_buffer.resize(result.mix_buffer.capacity(), 0);
+
         for index in 0..module.num_channels {
             result
                 .channels

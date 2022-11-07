@@ -1,8 +1,14 @@
+#![feature(unchecked_math)]
+#![feature(stdsimd)]
+
+#[cfg(target_os = "windows")]
+mod win32;
+
 #[cfg(target_os = "windows")]
 use win32::Win32 as Platform;
 
 #[cfg(target_os = "linux")]
-use ::xm_player::DummyInterface as Platform;
+use xm_player::DummyInterface as Platform;
 use xm_player::PlatformInterface;
 
 use std::error;
@@ -100,9 +106,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     const SAMPLE_RATE: usize = 48000;
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());
 
-    let file_data = std::fs::read("../../unreal.xm")?;
+    //let file_data = std::fs::read("../../unreal.xm")?;
 
-    let module = Module::from_memory(&file_data)?;
+    let module = Module::from_memory(embedded_data)?;
 
     let mut player = Player::new(&module, platform.as_ref(), SAMPLE_RATE, 1);
 

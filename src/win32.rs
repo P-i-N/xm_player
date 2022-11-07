@@ -5,11 +5,13 @@ use core::arch::x86_64::{
     _mm256_set_epi16, _mm256_set_epi32, _mm256_setr_epi16, _mm256_slli_epi32, _mm256_srai_epi32,
 };
 
+use super::PlatformInterface;
 use wasapi::*;
 
-use super::PlatformInterface;
+use std::time::Instant;
 
 pub struct Win32 {
+    start_instant: Instant,
     _device: wasapi::Device,
     audio_client: wasapi::AudioClient,
     event_handle: wasapi::Handle,
@@ -43,6 +45,7 @@ impl Win32 {
         audio_client.start_stream().unwrap();
 
         Some(Win32 {
+            start_instant: Instant::now(),
             _device: device,
             audio_client,
             event_handle,
@@ -54,7 +57,9 @@ impl Win32 {
 
 impl PlatformInterface for Win32 {
     fn get_time_us(&self) -> u32 {
-        //
+        Instant::now()
+            .duration_since(self.start_instant)
+            .as_micros() as u32
     }
 
     fn get_available_samples(&self) -> usize {
