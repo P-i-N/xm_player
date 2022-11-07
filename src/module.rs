@@ -1,10 +1,10 @@
 use super::{Box, Error, Rc, Vec};
 
 use super::BinaryReader;
+use super::Cell;
 use super::FormatError;
 use super::Instrument;
 use super::Pattern;
-use super::Row;
 
 pub struct Module<'a> {
     pub data: &'a [u8],
@@ -69,14 +69,14 @@ impl<'a> Module<'a> {
         pattern_order_index: usize,
         channel_index: usize,
         row_index: usize,
-    ) -> Row {
+    ) -> Cell {
         if pattern_order_index >= self.pattern_order.len() || channel_index >= self.num_channels {
-            return Row::default();
+            return Cell::new();
         }
 
         let pattern_index = self.pattern_order[pattern_order_index];
         if pattern_index >= self.patterns.len() {
-            return Row::default();
+            return Cell::new();
         }
 
         self.patterns[pattern_index].get_channel_row(channel_index, row_index)

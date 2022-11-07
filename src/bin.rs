@@ -100,24 +100,33 @@ fn row_to_colored_string(row: &Row) -> String {
 }
  */
 
+fn on_player_tick(player: &Player) {
+    if player.row_tick == 0 {
+        print!("{:02}", player.row_index);
+
+        println!(
+            "\x1b[0m | CPU: {}us / {:.1}%",
+            player.row_cpu_duration, player.row_cpu_usage
+        );
+    }
+}
+
 fn main() -> Result<(), Box<dyn error::Error>> {
     let embedded_data = include_bytes!("../unreal.xm");
 
     const SAMPLE_RATE: usize = 48000;
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());
 
-    //let file_data = std::fs::read("../../unreal.xm")?;
-
     let module = Module::from_memory(embedded_data)?;
 
     let mut player = Player::new(&module, platform.as_ref(), SAMPLE_RATE, 1);
 
-    //println!("Benchmarking...");
-    //println!("Elapsed time: {}ms", player.benchmark().as_millis());
+    println!("Benchmarking...");
+    println!("Elapsed time: {} ms", player.benchmark() / 1000);
 
     //return Ok(());
 
-    player.print_rows = true;
+    player.set_tick_callback(on_player_tick);
 
     let mut buffer = [0 as i16; SAMPLE_RATE * 2];
 

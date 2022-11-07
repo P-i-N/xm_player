@@ -6,7 +6,7 @@
 			"group": "build",
 			"type": "cargo",
 			"command": "build",
-			//"args": [ "" ],
+			//"args": [ "--release" ],
 			"problemMatcher": [
 				"$rustc"
 			],

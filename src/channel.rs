@@ -1,5 +1,6 @@
 use super::math::*;
 use super::player::SongState;
+use super::Cell;
 use super::Envelope;
 use super::Fixed;
 use super::Instrument;
@@ -7,7 +8,6 @@ use super::LoopType;
 use super::Module;
 use super::NibbleTest;
 use super::Rc;
-use super::Row;
 use super::Sample;
 
 fn get_frequency(period: f32) -> f32 {
@@ -63,7 +63,7 @@ pub struct Channel<'a> {
     pub index: usize,
     pub mute: bool,
     inv_sample_rate: f32,
-    row: Row,
+    row: Cell,
     sample: Option<Rc<Sample>>,
     instrument: Option<Rc<Instrument>>,
     note: f32,
@@ -97,7 +97,7 @@ impl<'a> Channel<'a> {
             index,
             mute: false,
             inv_sample_rate: 1.0 / (sample_rate as f32),
-            row: Row::default(),
+            row: Cell::new(),
             sample: None,
             instrument: None,
             note: 0.0,
@@ -107,7 +107,7 @@ impl<'a> Channel<'a> {
             note_target_period: 0.0,
             note_frequency: 0.0,
             note_step: 0.0,
-            note_step_fp: Fixed::new_u32(0),
+            note_step_fp: Fixed::from_u32(0),
             note_released: false,
             loop_dir_forward: true,
             volume_envelope_ticks: 0,
@@ -118,7 +118,7 @@ impl<'a> Channel<'a> {
             vibrato_note_offset: 0.0,
             last_nonzero_effect_param: 0,
             sample_offset: 0.0,
-            sample_offset_fp: Fixed::new_u32(0),
+            sample_offset_fp: Fixed::from_u32(0),
             final_volume: 0,
             final_panning: 0,
         }
@@ -148,7 +148,7 @@ impl<'a> Channel<'a> {
             }
 
             self.note_step = self.note_frequency * self.inv_sample_rate;
-            self.note_step_fp = Fixed::new_f32(self.note_step);
+            self.note_step_fp = Fixed::from_f32(self.note_step);
 
             if !keep_volume {
                 self.note_volume = sample.volume as usize;
@@ -156,7 +156,7 @@ impl<'a> Channel<'a> {
 
             if !keep_position {
                 self.sample_offset = 0.0;
-                self.sample_offset_fp = Fixed::new_u32(0);
+                self.sample_offset_fp = Fixed::from_u32(0);
                 self.note_released = false;
                 self.loop_dir_forward = true;
             }
@@ -182,7 +182,7 @@ impl<'a> Channel<'a> {
         self.sample = None;
     }
 
-    fn tick_new_row(&mut self, row: Row) {
+    fn tick_new_row(&mut self, row: Cell) {
         let mut keep_period = false;
         let mut keep_volume = false;
         let mut keep_position = false;
@@ -325,7 +325,7 @@ impl<'a> Channel<'a> {
 
         self.note_frequency = get_frequency(self.note_period - 16.0 * self.vibrato_note_offset);
         self.note_step = self.note_frequency * self.inv_sample_rate;
-        self.note_step_fp = Fixed::new_f32(self.note_step);
+        self.note_step_fp = Fixed::from_f32(self.note_step);
 
         self.final_volume = self.note_volume;
         self.final_panning = self.note_panning;
@@ -379,7 +379,7 @@ impl<'a> Channel<'a> {
 
     pub fn tick(
         &mut self,
-        mut row: Row,
+        mut row: Cell,
         song_state: &SongState,
         row_tick_index: usize,
         buffer: &mut [i32],
@@ -411,11 +411,10 @@ impl<'a> Channel<'a> {
 
             unsafe {
                 let mut buffer_ptr = buffer.as_mut_ptr();
-                let mut sample_ptr = sample.data.as_ptr().add(offset as usize);
 
                 // Can we use fast path for mixing? Using fast path means we can safely forward the sample
-                // on every buffer element and not worry about hitting loop boundaries.
-                let mut use_fast_path = match sample.loop_type {
+                // on every buffer element and not worry about hitting loop boundaries
+                let use_fast_path = match sample.loop_type {
                     LoopType::None => (offset + (buffer.len() as f32) * step) < sample.sample_end,
                     LoopType::Forward => (offset + (buffer.len() as f32) * step) < sample.loop_end,
                     LoopType::PingPong => {
@@ -423,6 +422,8 @@ impl<'a> Channel<'a> {
                             && ((offset + (buffer.len() as f32) * step) < sample.loop_end)
                     }
                 };
+
+                const USE_FP_MATH: bool = true;
 
                 macro_rules! render_samples {
                     ($test:block) => {
@@ -450,103 +451,85 @@ impl<'a> Channel<'a> {
                     };
                 }
 
-                macro_rules! urender_samples {
+                macro_rules! render_samples_fp {
                     ($test:block) => {
-                        let mut dst = bufferi32.as_mut_ptr();
-                        let end = dst.add(bufferi32.len());
+                        let end = buffer_ptr.add(buffer.len());
 
-                        let mut v = *sample_ptr as i32;
-                        v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
-                            | ((v.saturating_mul(vr).unchecked_shr(8)).unchecked_shl(16));
+                        if step_fp.has_only_fract() {
+                            let mut v =
+                                *sample.data.get_unchecked(offset_fp.integer as usize) as i32;
 
-                        if step_fp.integer == 0 {
-                            while dst < end {
+                            while buffer_ptr < end {
+                                *buffer_ptr = v;
                                 if offset_fp.add_fract_mut(step_fp.fract) {
-                                    offset_fp.integer = offset_fp.integer.unchecked_add(1);
                                     $test;
-
-                                    v = *sample_ptr as i32;
-                                    v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
-                                        | ((v.saturating_mul(vr).unchecked_shr(8))
-                                            .unchecked_shl(16));
+                                    v = *sample.data.get_unchecked(offset_fp.integer as usize)
+                                        as i32;
                                 }
 
-                                *dst = v;
-                                dst = dst.add(1);
+                                buffer_ptr = buffer_ptr.add(1);
                             }
                         } else {
-                            while dst < end {
+                            while buffer_ptr < end {
+                                *buffer_ptr =
+                                    *sample.data.get_unchecked(offset_fp.integer as usize) as i32;
+
                                 offset_fp.add_mut(&step_fp);
-                                offset_fp.integer = offset_fp.integer.unchecked_add(1);
                                 $test;
 
-                                v = *sample_ptr as i32;
-                                v = ((v.unchecked_mul(vl).unchecked_shr(8)) & 0x0000FFFF)
-                                    | ((v.saturating_mul(vr).unchecked_shr(8)).unchecked_shl(16));
-
-                                *dst = v;
-                                dst = dst.add(1);
+                                buffer_ptr = buffer_ptr.add(1);
                             }
                         }
 
                         self.sample_offset_fp = offset_fp;
-                        self.sample_offset = f32::from(offset_fp);
+                        self.sample_offset = offset_fp.to_f32();
                     };
                 }
 
                 if use_fast_path {
-                    /*
-                    urender_samples!({
-                        sample_ptr = sample_ptr.add(1);
-                    });
-                    */
-                    render_samples!({});
+                    if USE_FP_MATH {
+                        render_samples_fp!({});
+                    } else {
+                        render_samples!({});
+                    }
                 } else {
                     match sample.loop_type {
                         LoopType::None => {
                             buffer.fill(0);
 
-                            render_samples!({
-                                if offset >= sample.sample_end {
-                                    break;
-                                }
-                            });
-
-                            /*
-                            let sample_end_fp = Fixed::new_f32(sample.sample_end);
-
-                            urender_samples!({
-                                if offset_fp.integer >= sample_end_fp.integer {
-                                    break;
-                                } else {
-                                    sample_ptr = sample_ptr.add(1);
-                                }
-                            });
-                            */
+                            if USE_FP_MATH {
+                                render_samples_fp!({
+                                    if offset_fp.integer >= (sample.sample_end as u32) {
+                                        break;
+                                    }
+                                });
+                            } else {
+                                render_samples!({
+                                    if offset >= sample.sample_end {
+                                        break;
+                                    }
+                                });
+                            }
 
                             self.note_kill();
                         }
                         LoopType::Forward => {
-                            render_samples!({
-                                if offset >= sample.loop_end {
-                                    offset = sample.loop_start;
-                                }
-                            });
-
-                            /*
-                            let loop_end_fp = Fixed::new_f32(sample.loop_end);
-
-                            urender_samples!({
-                                if offset_fp.integer >= loop_end_fp.integer {
-                                    offset_fp = Fixed::new_u32(sample.loop_start as u32);
-                                    sample_ptr = sample.data.as_ptr().add(usize::from(offset_fp));
-                                } else {
-                                    sample_ptr = sample_ptr.add(1);
-                                }
-                            });
-                            */
+                            if USE_FP_MATH {
+                                render_samples_fp!({
+                                    if offset_fp.integer >= (sample.loop_end as u32) {
+                                        offset_fp = Fixed::from_f32(sample.loop_start);
+                                    }
+                                });
+                            } else {
+                                render_samples!({
+                                    if offset >= sample.loop_end {
+                                        offset = sample.loop_start;
+                                    }
+                                });
+                            }
                         }
                         LoopType::PingPong => {
+                            /*
                             for f in buffer {
                                 *f = *sample.data.get_unchecked(offset as usize) as i32;
 
@@ -566,6 +549,7 @@ impl<'a> Channel<'a> {
                             }
 
                             self.sample_offset = offset;
+                            */
                         }
                     }
                 }

@@ -20,9 +20,11 @@ mod fixed;
 mod module;
 pub use module::Module;
 
+mod cell;
+pub use cell::Cell;
+
 mod pattern;
 pub use pattern::Pattern;
-use pattern::Row;
 
 mod envelope;
 pub use envelope::Envelope;
@@ -69,7 +71,7 @@ mod math {
     }
 }
 
-type Fixed = fixed::FixedU32x<16>;
+type Fixed = fixed::FixedU32x;
 
 #[derive(Debug)]
 pub struct FormatError {

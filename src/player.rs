@@ -1,4 +1,6 @@
-use super::{Channel, Duration, Module, NibbleTest, PlatformInterface, String, Vec};
+use core::time;
+
+use super::{Box, Channel, Module, NibbleTest, PlatformInterface, Vec};
 
 #[derive(Clone, Copy)]
 pub struct SongState {
@@ -6,15 +8,13 @@ pub struct SongState {
     pub tempo: usize,
 }
 
-pub struct Player<'a, 'b> {
+pub struct Player<'a> {
     pub module: &'a Module<'a>,
-    pub platform: &'b dyn PlatformInterface,
+    pub platform: &'a dyn PlatformInterface,
     pub sample_rate: usize,
     pub oversample: usize,
     pub samples_per_tick: usize,
-
     pub song_state: SongState,
-
     pub pattern_order_index: usize,
     pub pattern_index: usize,
     pub row_index: usize,
@@ -31,9 +31,6 @@ pub struct Player<'a, 'b> {
     // modules with complicated pattern jump commands
     pub loop_count: usize,
 
-    // Print colored pattern rows, while rendering/playing
-    pub print_rows: bool,
-
     channels: Vec<Channel<'a>>,
 
     // Individual channels are rendered there each tick - mono
@@ -43,26 +40,28 @@ pub struct Player<'a, 'b> {
     mix_buffer: Vec<i16>,
 
     // For calculating CPU usage
-    tick_durations: Vec<Duration>,
+    tick_durations: Vec<u32>,
 
     // How long it took to render & mix last row
-    row_cpu_duration: Duration,
+    pub row_cpu_duration: u32,
 
     // Estimated CPU usage (0.0% - 100.0%) on last row
-    row_cpu_usage: f32,
+    pub row_cpu_usage: f32,
+
+    tick_callback: Option<Box<dyn Fn(&Player) + 'a>>,
 }
 
 fn get_samples_per_tick(sample_rate: usize, bpm: usize, oversample: usize) -> usize {
     (((sample_rate * 2500) / bpm) / 1000) * oversample
 }
 
-impl<'a, 'b> Player<'a, 'b> {
+impl<'a> Player<'a> {
     pub fn new(
         module: &'a Module,
-        platform: &'b dyn PlatformInterface,
+        platform: &'a dyn PlatformInterface,
         sample_rate: usize,
         oversample: usize,
-    ) -> Player<'a, 'b> {
+    ) -> Player<'a> {
         let samples_per_tick = get_samples_per_tick(sample_rate, module.bpm, oversample);
 
         let mut result = Player {
@@ -82,13 +81,13 @@ impl<'a, 'b> Player<'a, 'b> {
             num_generated_samples: 0,
             loop_current_pattern: false,
             loop_count: 0,
-            print_rows: false,
             channels: Vec::new(),
             channel_buffer: Vec::with_capacity(samples_per_tick),
             mix_buffer: Vec::with_capacity(samples_per_tick * 2),
             tick_durations: Vec::new(),
-            row_cpu_duration: Duration::ZERO,
+            row_cpu_duration: 0,
             row_cpu_usage: 0.0,
+            tick_callback: None,
         };
 
         result
@@ -110,6 +109,14 @@ impl<'a, 'b> Player<'a, 'b> {
         result
     }
 
+    pub fn set_tick_callback(&mut self, cb: impl Fn(&Player) + 'a) {
+        self.tick_callback = Some(Box::new(cb));
+    }
+
+    pub fn reset_tick_callback(&mut self) {
+        self.tick_callback = None;
+    }
+
     pub fn reset(&mut self) {
         self.pattern_order_index = 0;
         self.pattern_index = 0;
@@ -122,6 +129,11 @@ impl<'a, 'b> Player<'a, 'b> {
         for channel in &mut self.channels {
             channel.reset();
         }
+    }
+
+    // Calculate tick duration in microseconds
+    pub fn get_tick_duration_us(&self) -> u32 {
+        (1000000 * (self.samples_per_tick as u32)) / ((self.oversample * self.sample_rate) as u32)
     }
 
     /*
@@ -159,7 +171,7 @@ impl<'a, 'b> Player<'a, 'b> {
         let mut result = 0.0f32;
 
         for t in &self.tick_durations {
-            result += t.as_micros() as f32;
+            result += *t as f32;
         }
 
         // Tick duration in microseconds
@@ -169,15 +181,15 @@ impl<'a, 'b> Player<'a, 'b> {
         (result / (tick_duration * (self.tick_durations.len() as f32))) * 100.0
     }
 
-    fn get_last_row_cpu_duration(&self) -> Duration {
+    fn get_last_row_cpu_duration(&self) -> u32 {
         if self.tick_durations.is_empty() {
-            return Duration::ZERO;
+            return 0;
         }
 
         let num_items = usize::min(self.tick_durations.len(), self.song_state.tempo);
         let slice = &self.tick_durations[self.tick_durations.len() - num_items..];
 
-        let mut result = Duration::ZERO;
+        let mut result = 0_u32;
         for d in slice {
             result += *d;
         }
@@ -270,18 +282,23 @@ impl<'a, 'b> Player<'a, 'b> {
     }
 
     fn tick(&mut self) {
-        if self.row_tick == 0 {
-            if self.print_rows {
-                //self.print_row();
-            }
+        if let Some(cb) = &self.tick_callback {
+            cb(self);
         }
 
-        //let time_start = self.platform.get_time_us();
+        /*
+        if self.row_tick == 0 {
+            if self.print_rows {
+            }
+        }
+        */
+
+        let time_start = self.platform.get_time_us();
 
         // Clear 32bit mix buffer
         self.mix_buffer.fill(0);
 
-        let mut channels_tick_duration = Duration::ZERO;
+        let mut channels_tick_duration = 0_u32;
 
         for i in 0..self.channels.len() {
             let channel = &mut self.channels[i];
@@ -289,7 +306,7 @@ impl<'a, 'b> Player<'a, 'b> {
             self.pattern_index = self.module.pattern_order[self.pattern_order_index];
             let row = self.module.patterns[self.pattern_index].channels[i][self.row_index];
 
-            //let channel_tick_start = self.platform.get_time_us();
+            let channel_tick_start = self.platform.get_time_us();
 
             let (vl, vr) = channel.tick(
                 row,
@@ -298,7 +315,7 @@ impl<'a, 'b> Player<'a, 'b> {
                 &mut self.channel_buffer,
             );
 
-            //channels_tick_duration += channel_tick_start.elapsed();
+            channels_tick_duration += self.platform.get_time_us() - channel_tick_start;
 
             if vl > 0 && vr > 0 {
                 self.platform.audio_mono2stereo_mix(
@@ -310,8 +327,12 @@ impl<'a, 'b> Player<'a, 'b> {
             }
         }
 
-        //self.tick_durations.push(time_start.elapsed());
-        //self.tick_durations.push(channels_tick_duration);
+        /*
+                self.tick_durations
+                    .push(self.platform.get_time_us() - time_start);
+        */
+
+        self.tick_durations.push(channels_tick_duration);
 
         self.num_generated_samples = self.mix_buffer.len() / self.oversample;
 
@@ -372,10 +393,9 @@ impl<'a, 'b> Player<'a, 'b> {
         }
     }
 
-    pub fn benchmark(&mut self) -> Duration {
-        //let time_start = Instant::now();
-        let prev_print_rows = self.print_rows;
-        self.print_rows = false;
+    pub fn benchmark(&mut self) -> u32 {
+        let time_start = self.platform.get_time_us();
+
         self.loop_count = 0;
 
         let mut buffer = Vec::<i16>::with_capacity(self.oversample * self.sample_rate * 2);
@@ -386,9 +406,7 @@ impl<'a, 'b> Player<'a, 'b> {
         }
 
         self.reset();
-        self.print_rows = prev_print_rows;
-        //time_start.elapsed()
 
-        Duration::ZERO
+        self.platform.get_time_us() - time_start
     }
 }
