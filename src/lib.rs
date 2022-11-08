@@ -52,22 +52,22 @@ pub use platform::PlatformInterface;
 ///////////////////////////////////////////////////////////////////////////////
 
 mod math {
-    use core::intrinsics::{floorf32, powf32, sinf32};
+    use micromath::F32Ext;
 
     pub fn fract(value: f32) -> f32 {
-        unsafe { value - floorf32(value) }
+        unsafe { value.fract() }
     }
 
     pub fn floor(value: f32) -> f32 {
-        unsafe { floorf32(value) }
+        unsafe { value.floor() }
     }
 
     pub fn pow(value: f32, exponent: f32) -> f32 {
-        unsafe { powf32(value, exponent) }
+        unsafe { value.powf(exponent) }
     }
 
     pub fn sin(value: f32) -> f32 {
-        unsafe { sinf32(value) }
+        unsafe { value.sin() }
     }
 }
 

@@ -41,8 +41,6 @@ impl FixedU32x {
     }
 
     pub fn add_mut(&mut self, value: &FixedU32x) {
-        let old_fract = self.fract;
-
         unsafe {
             self.integer = self.integer.unchecked_add(value.integer);
             let (new_fract, overflow) = self.fract.overflowing_add(value.fract);
@@ -51,6 +49,19 @@ impl FixedU32x {
             if overflow {
                 self.integer = self.integer.unchecked_add(1);
             }
+        }
+    }
+
+    // Multiply+Add - returns integral part of: value * count + self
+    pub fn mad_u32(&self, value: &FixedU32x, count: u32) -> u32 {
+        unsafe {
+            let result = self
+                .integer
+                .unchecked_add(value.integer.unchecked_mul(count));
+
+            let fract_mult = (value.fract as u32).unchecked_mul(count) + (self.fract as u32);
+
+            result + fract_mult.unchecked_shr(16)
         }
     }
 }

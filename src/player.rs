@@ -1,4 +1,4 @@
-use core::time;
+use core::{mem::transmute, time};
 
 use super::{Box, Channel, Module, NibbleTest, PlatformInterface, Vec};
 
@@ -38,17 +38,6 @@ pub struct Player<'a> {
 
     // Mix of all channels for each tick - stereo
     mix_buffer: Vec<i16>,
-
-    // For calculating CPU usage
-    tick_durations: Vec<u32>,
-
-    // How long it took to render & mix last row
-    pub row_cpu_duration: u32,
-
-    // Estimated CPU usage (0.0% - 100.0%) on last row
-    pub row_cpu_usage: f32,
-
-    tick_callback: Option<Box<dyn Fn(&Player) + 'a>>,
 }
 
 fn get_samples_per_tick(sample_rate: usize, bpm: usize, oversample: usize) -> usize {
@@ -84,10 +73,6 @@ impl<'a> Player<'a> {
             channels: Vec::new(),
             channel_buffer: Vec::with_capacity(samples_per_tick),
             mix_buffer: Vec::with_capacity(samples_per_tick * 2),
-            tick_durations: Vec::new(),
-            row_cpu_duration: 0,
-            row_cpu_usage: 0.0,
-            tick_callback: None,
         };
 
         result
@@ -107,14 +92,6 @@ impl<'a> Player<'a> {
         //result.loop_current_pattern = true;
 
         result
-    }
-
-    pub fn set_tick_callback(&mut self, cb: impl Fn(&Player) + 'a) {
-        self.tick_callback = Some(Box::new(cb));
-    }
-
-    pub fn reset_tick_callback(&mut self) {
-        self.tick_callback = None;
     }
 
     pub fn reset(&mut self) {
@@ -167,41 +144,7 @@ impl<'a> Player<'a> {
     }
     */
 
-    fn estimate_cpu_usage(&self) -> f32 {
-        let mut result = 0.0f32;
-
-        for t in &self.tick_durations {
-            result += *t as f32;
-        }
-
-        // Tick duration in microseconds
-        let tick_duration = (1000000.0 * (self.samples_per_tick as f32))
-            / ((self.oversample * self.sample_rate) as f32);
-
-        (result / (tick_duration * (self.tick_durations.len() as f32))) * 100.0
-    }
-
-    fn get_last_row_cpu_duration(&self) -> u32 {
-        if self.tick_durations.is_empty() {
-            return 0;
-        }
-
-        let num_items = usize::min(self.tick_durations.len(), self.song_state.tempo);
-        let slice = &self.tick_durations[self.tick_durations.len() - num_items..];
-
-        let mut result = 0_u32;
-        for d in slice {
-            result += *d;
-        }
-
-        result
-    }
-
     fn step_row(&mut self) {
-        self.row_cpu_usage = self.estimate_cpu_usage();
-        self.row_cpu_duration = self.get_last_row_cpu_duration();
-        self.tick_durations.clear();
-
         let mut pattern_break = false;
 
         for channel_index in 0..self.channels.len() {
@@ -282,31 +225,14 @@ impl<'a> Player<'a> {
     }
 
     fn tick(&mut self) {
-        if let Some(cb) = &self.tick_callback {
-            cb(self);
-        }
-
-        /*
-        if self.row_tick == 0 {
-            if self.print_rows {
-            }
-        }
-        */
-
-        let time_start = self.platform.get_time_us();
-
         // Clear 32bit mix buffer
         self.mix_buffer.fill(0);
-
-        let mut channels_tick_duration = 0_u32;
 
         for i in 0..self.channels.len() {
             let channel = &mut self.channels[i];
 
             self.pattern_index = self.module.pattern_order[self.pattern_order_index];
             let row = self.module.patterns[self.pattern_index].channels[i][self.row_index];
-
-            let channel_tick_start = self.platform.get_time_us();
 
             let (vl, vr) = channel.tick(
                 row,
@@ -315,24 +241,23 @@ impl<'a> Player<'a> {
                 &mut self.channel_buffer,
             );
 
-            channels_tick_duration += self.platform.get_time_us() - channel_tick_start;
-
             if vl > 0 && vr > 0 {
-                self.platform.audio_mono2stereo_mix(
-                    &self.channel_buffer,
-                    &mut self.mix_buffer,
-                    vl as i32,
-                    vr as i32,
-                );
+                unsafe {
+                    let mut dst_ptr = self.mix_buffer.as_mut_ptr();
+
+                    for s in &self.channel_buffer {
+                        let vl = s.unchecked_mul(vl as i32).unchecked_shr(8) as i16;
+                        let vr = s.unchecked_mul(vr as i32).unchecked_shr(8) as i16;
+
+                        *dst_ptr = (*dst_ptr).saturating_add(vl);
+                        dst_ptr = dst_ptr.add(1);
+
+                        *dst_ptr = (*dst_ptr).saturating_add(vr);
+                        dst_ptr = dst_ptr.add(1);
+                    }
+                }
             }
         }
-
-        /*
-                self.tick_durations
-                    .push(self.platform.get_time_us() - time_start);
-        */
-
-        self.tick_durations.push(channels_tick_duration);
 
         self.num_generated_samples = self.mix_buffer.len() / self.oversample;
 
@@ -393,9 +318,7 @@ impl<'a> Player<'a> {
         }
     }
 
-    pub fn benchmark(&mut self) -> u32 {
-        let time_start = self.platform.get_time_us();
-
+    pub fn benchmark(&mut self) {
         self.loop_count = 0;
 
         let mut buffer = Vec::<i16>::with_capacity(self.oversample * self.sample_rate * 2);
@@ -406,7 +329,5 @@ impl<'a> Player<'a> {
         }
 
         self.reset();
-
-        self.platform.get_time_us() - time_start
     }
 }

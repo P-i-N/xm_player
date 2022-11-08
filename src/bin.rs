@@ -12,6 +12,8 @@ use xm_player::DummyInterface as Platform;
 use xm_player::PlatformInterface;
 
 use std::error;
+use std::time::Duration;
+use std::time::Instant;
 
 use ::xm_player::Module;
 use ::xm_player::Player;
@@ -100,14 +102,10 @@ fn row_to_colored_string(row: &Row) -> String {
 }
  */
 
-fn on_player_tick(player: &Player) {
+fn on_player_tick(player: &Player, dur: Duration) {
     if player.row_tick == 0 {
         print!("{:02}", player.row_index);
-
-        println!(
-            "\x1b[0m | CPU: {}us / {:.1}%",
-            player.row_cpu_duration, player.row_cpu_usage
-        );
+        println!("\x1b[0m | CPU: {}us", dur.as_micros());
     }
 }
 
@@ -122,11 +120,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let mut player = Player::new(&module, platform.as_ref(), SAMPLE_RATE, 1);
 
     println!("Benchmarking...");
-    println!("Elapsed time: {} ms", player.benchmark() / 1000);
+    //println!("Elapsed time: {} ms", player.benchmark() / 1000);
 
     //return Ok(());
-
-    player.set_tick_callback(on_player_tick);
 
     let mut buffer = [0 as i16; SAMPLE_RATE * 2];
 

@@ -13,9 +13,9 @@ pub struct Sample {
     pub name: String,
     pub data: Vec<i16>,
     pub loop_type: LoopType,
-    pub loop_start: f32,
-    pub loop_end: f32,
-    pub sample_end: f32,
+    pub loop_start: u32,
+    pub loop_end: u32,
+    pub sample_end: u32,
     pub volume: u8,
     pub panning: u8,
     pub relative_note: i8,
@@ -28,8 +28,8 @@ impl Sample {
 
         let mut sample_length = br.read_u32() as usize;
 
-        result.loop_start = br.read_u32() as f32;
-        result.loop_end = result.loop_start + (br.read_u32() as f32);
+        result.loop_start = br.read_u32();
+        result.loop_end = result.loop_start + br.read_u32();
         result.volume = br.read_u8();
         result.finetune = (br.read_i8() as f32) / 128.0;
 
@@ -38,8 +38,8 @@ impl Sample {
         let is_16bit = (flags & 0b10000) != 0;
         if is_16bit {
             sample_length >>= 1;
-            result.loop_start = floor(result.loop_start / 2.0);
-            result.loop_end = floor(result.loop_end / 2.0);
+            result.loop_start = result.loop_start / 2;
+            result.loop_end = result.loop_end / 2;
         }
 
         result.loop_type = match flags & 0x3 {
@@ -50,7 +50,7 @@ impl Sample {
         }?;
 
         result.data.resize(sample_length, 0);
-        result.sample_end = sample_length as f32;
+        result.sample_end = sample_length as u32;
 
         result.panning = br.read_u8();
         result.relative_note = br.read_i8();
