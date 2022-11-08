@@ -3,6 +3,7 @@
 #![feature(stdsimd)]
 #![feature(error_in_core)]
 #![feature(core_intrinsics)]
+#![warn(dead_code)]
 
 extern crate alloc;
 extern crate core;
@@ -13,7 +14,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::error::Error;
 use core::fmt::Display;
-use core::time::Duration;
 
 mod fixed;
 
@@ -49,25 +49,29 @@ mod platform;
 pub use platform::DummyInterface;
 pub use platform::PlatformInterface;
 
+mod packed_module;
+pub use packed_module::PackedModule;
+pub use packed_module::PackingParams;
+
 ///////////////////////////////////////////////////////////////////////////////
 
 mod math {
     use micromath::F32Ext;
 
     pub fn fract(value: f32) -> f32 {
-        unsafe { value.fract() }
+        value.fract()
     }
 
     pub fn floor(value: f32) -> f32 {
-        unsafe { value.floor() }
+        value.floor()
     }
 
     pub fn pow(value: f32, exponent: f32) -> f32 {
-        unsafe { value.powf(exponent) }
+        value.powf(exponent)
     }
 
     pub fn sin(value: f32) -> f32 {
-        unsafe { value.sin() }
+        value.sin()
     }
 }
 
@@ -79,7 +83,7 @@ pub struct FormatError {
 }
 
 impl FormatError {
-    pub fn new(details: &str) -> FormatError {
+    pub fn new(_details: &str) -> FormatError {
         FormatError {
             details: String::new(),
         }
@@ -93,7 +97,7 @@ impl Error for FormatError {
 }
 
 impl Display for FormatError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         Ok(())
     }
 }

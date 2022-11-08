@@ -1,5 +1,3 @@
-use super::Box;
-
 pub trait PlatformInterface {
     // Get program's elapsed time in microseconds
     fn get_available_samples(&self) -> usize;

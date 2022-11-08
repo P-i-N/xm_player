@@ -53,10 +53,6 @@ fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -
     ticks
 }
 
-pub struct ChannelState {
-    //
-}
-
 pub struct Channel<'a> {
     module: &'a Module<'a>,
     song_state: SongState,
@@ -372,7 +368,7 @@ impl<'a> Channel<'a> {
 
     pub fn tick(
         &mut self,
-        mut row: Cell,
+        row: Cell,
         song_state: &SongState,
         row_tick_index: usize,
         buffer: &mut [i32],

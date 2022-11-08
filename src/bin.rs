@@ -9,11 +9,12 @@ use win32::Win32 as Platform;
 
 #[cfg(target_os = "linux")]
 use xm_player::DummyInterface as Platform;
+use xm_player::PackedModule;
+use xm_player::PackingParams;
 use xm_player::PlatformInterface;
 
 use std::error;
 use std::time::Duration;
-use std::time::Instant;
 
 use ::xm_player::Module;
 use ::xm_player::Player;
@@ -110,12 +111,23 @@ fn on_player_tick(player: &Player, dur: Duration) {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let embedded_data = include_bytes!("../unreal.xm");
+    let embedded_data = include_bytes!("../song.xm");
 
     const SAMPLE_RATE: usize = 48000;
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());
 
     let module = Module::from_memory(embedded_data)?;
+
+    let mut packed_data = Vec::<u8>::new();
+
+    let packing_params = PackingParams {
+        convert_to_8bits: true,
+        downsample_threshold: 1,
+    };
+
+    let _packed_module = PackedModule::from_module(&module, packing_params, &mut packed_data);
+
+    std::fs::write("../../song.pxm", packed_data)?;
 
     let mut player = Player::new(&module, platform.as_ref(), SAMPLE_RATE, 1);
 

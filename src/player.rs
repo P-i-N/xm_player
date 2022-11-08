@@ -1,6 +1,4 @@
-use core::{mem::transmute, time};
-
-use super::{Box, Channel, Module, NibbleTest, PlatformInterface, Vec};
+use super::{Channel, Module, NibbleTest, PlatformInterface, Vec};
 
 #[derive(Clone, Copy)]
 pub struct SongState {

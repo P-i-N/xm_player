@@ -1,4 +1,4 @@
-use super::{math::*, BinaryReader, Box, Error, FormatError, String, Vec};
+use super::{BinaryReader, Box, Error, FormatError, String, Vec};
 
 #[derive(Clone, Default)]
 pub enum LoopType {

@@ -39,11 +39,8 @@ impl<'a> Module<'a> {
 
         result.parse_header(&mut br)?;
 
-        let mut pattern_index = 0;
         for pattern in &mut result.patterns {
             (*pattern).parse(&mut br)?;
-
-            pattern_index += 1;
         }
 
         for _ in 0..result.num_instruments {

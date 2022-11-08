@@ -21,10 +21,6 @@ impl FixedU32x {
         }
     }
 
-    pub fn to_f32(&self) -> f32 {
-        (self.integer as f32) + (self.fract as f32) / 65536_f32
-    }
-
     pub fn has_only_fract(&self) -> bool {
         self.integer == 0
     }
