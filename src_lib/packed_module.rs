@@ -69,47 +69,84 @@ fn write_sample(sample: &Sample, params: &PackingParams, packed_data: &mut Vec<u
     }
 }
 
-fn write_pattern(p: &Pattern, packed_data: &mut Vec<u8>) {
-    let num_channels = p.channels.len();
-
-    let mut channel_index = 0;
-    let mut row_index = 0;
+fn write_channel_stream(module: &Module, channel_index: usize, packed_data: &mut Vec<u8>) {
     let mut prev_cell = Cell::new();
     let mut num_repeat: u8 = 0;
 
-    while channel_index < num_channels {
-        let cell = p.channels[channel_index][row_index];
+    for p in &module.patterns {
+        let mut row_index = 0;
 
-        if cell == prev_cell {
-            if num_repeat == 64 {
-                packed_data.push((num_repeat - 1) | 0b_1100_0000);
-                num_repeat = 0;
+        while row_index < p.num_rows {
+            let cell = p.channels[channel_index][row_index];
+
+            if cell == prev_cell {
+                if num_repeat == 64 {
+                    packed_data.push((num_repeat - 1) | 0b_1100_0000);
+                    num_repeat = 0;
+                }
+
+                num_repeat += 1;
+            } else {
+                if num_repeat > 0 {
+                    packed_data.push((num_repeat - 1) | 0b_1100_0000);
+                    num_repeat = 0;
+                }
+
+                cell.write_packed(packed_data);
             }
 
-            num_repeat += 1;
-        } else {
-            if num_repeat > 0 {
-                packed_data.push((num_repeat - 1) | 0b_1100_0000);
-                num_repeat = 0;
-            }
-
-            cell.write_packed(packed_data);
+            prev_cell = cell;
+            row_index += 1;
         }
+    }
 
-        prev_cell = cell;
+    if num_repeat > 0 {
+        packed_data.push((num_repeat - 1) | 0b_1100_0000);
+    }
+}
 
-        row_index += 1;
-        if row_index >= p.channels[channel_index].len() {
-            row_index = 0;
-            channel_index += 1;
-            prev_cell = Cell::new();
+fn write_marker(name: &str, packed_data: &mut Vec<u8>) {
+    for b in name.as_bytes() {
+        packed_data.push(*b);
+    }
+}
 
-            if num_repeat > 0 {
-                packed_data.push((num_repeat - 1) | 0b_1100_0000);
-                num_repeat = 0;
+fn find_subsequence<T>(haystack: &[T], needle: &[T]) -> Option<usize>
+where
+    for<'a> &'a [T]: PartialEq,
+{
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn compress_channel_stream(input: &[u8]) -> Vec<u8> {
+    let mut result = Vec::new();
+
+    let mut best_substr_len = 0;
+    let mut best_substr_offset = 0;
+
+    println!("Looking for longest substring in {} bytes...", input.len());
+
+    for substr_off in 0..input.len() / 2 {
+        for substr_len in 3..(input.len() / 2) - substr_off {
+            let needle = &input[input.len() - substr_len - substr_off..input.len() - substr_off];
+
+            if let Some(substr_offset) =
+                find_subsequence(&input[0..input.len() - substr_len - substr_off], &needle)
+            {
+                if substr_len > best_substr_len {
+                    best_substr_len = substr_len;
+                    best_substr_offset = substr_offset;
+                }
             }
         }
     }
+
+    println!("Best substr len: {}", best_substr_len);
+    println!("Best substr off: {}", best_substr_offset);
+
+    result
 }
 
 impl<'a> PackedModule<'a> {
@@ -121,14 +158,20 @@ impl<'a> PackedModule<'a> {
         // Convert & store all instrument samples
         for instrument in &module.instruments {
             for sample in &instrument.samples {
-                write_sample(sample.as_ref(), &params, packed_data);
+                //write_marker("[SAMPLE]", packed_data);
+                //write_sample(sample.as_ref(), &params, packed_data);
             }
         }
 
-        // Pack all patterns
-        for pattern in &module.patterns {
-            write_pattern(pattern, packed_data);
+        for i in 0..module.num_channels {
+            //write_marker("[CHANNEL]", packed_data);
+            //write_channel_stream(module, i, packed_data);
         }
+
+        let mut channel_stream = Vec::<u8>::new();
+        write_channel_stream(module, 0, &mut channel_stream);
+
+        packed_data.append(&mut compress_channel_stream(&channel_stream));
 
         PackedModule { data: packed_data }
     }

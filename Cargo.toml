@@ -13,11 +13,15 @@ wasapi = "0.12.0"
 
 [lib]
 name = "xm_player"
-path = "src/lib.rs"
+path = "src_lib/lib.rs"
 
 [[bin]]
 name = "xm_player"
-path = "src/bin.rs"
+path = "src_player/main.rs"
+
+[[bin]]
+name = "xm_convert"
+path = "src_convert/main.rs"
 
 [profile.release]
-# debug = true
+debug = true

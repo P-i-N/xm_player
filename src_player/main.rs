@@ -7,20 +7,18 @@ mod win32;
 #[cfg(target_os = "windows")]
 use win32::Win32 as Platform;
 
-#[cfg(target_os = "linux")]
-use xm_player::DummyInterface as Platform;
+use xm_player::Module;
 use xm_player::PackedModule;
 use xm_player::PackingParams;
 use xm_player::PlatformInterface;
+use xm_player::Player;
 
 use std::error;
 use std::time::Duration;
 
-use ::xm_player::Module;
-use ::xm_player::Player;
-
 extern crate core;
 use core::include_bytes;
+use std::time::Instant;
 
 /*
 fn row_to_colored_string(row: &Row) -> String {
@@ -111,7 +109,7 @@ fn on_player_tick(player: &Player, dur: Duration) {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let embedded_data = include_bytes!("../song.xm");
+    let embedded_data = include_bytes!("../unreal_small.xm");
 
     const SAMPLE_RATE: usize = 48000;
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());
@@ -127,14 +125,33 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     let _packed_module = PackedModule::from_module(&module, packing_params, &mut packed_data);
 
+    // Write as hex text
+    {
+        let mut hex = Vec::<u8>::new();
+        for b in &packed_data {
+            let s = format!("{:02X}", *b);
+
+            for sb in s.as_bytes() {
+                hex.push(*sb);
+            }
+        }
+
+        std::fs::write("../../song.hex", hex)?;
+    }
+
     std::fs::write("../../song.pxm", packed_data)?;
+
+    return Ok(());
 
     let mut player = Player::new(&module, platform.as_ref(), SAMPLE_RATE, 1);
 
+    // Benchmark
     println!("Benchmarking...");
-    //println!("Elapsed time: {} ms", player.benchmark() / 1000);
-
-    //return Ok(());
+    for _ in 0..10 {
+        let time_start = Instant::now();
+        player.benchmark();
+        println!("Elapsed time: {} ms", time_start.elapsed().as_millis());
+    }
 
     let mut buffer = [0 as i16; SAMPLE_RATE * 2];
 

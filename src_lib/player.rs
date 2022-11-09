@@ -222,6 +222,7 @@ impl<'a> Player<'a> {
         }
     }
 
+    #[inline(never)]
     fn tick(&mut self) {
         // Clear 32bit mix buffer
         self.mix_buffer.fill(0);

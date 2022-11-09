@@ -1,4 +1,4 @@
-#![no_std]
+//#![no_std]
 #![feature(unchecked_math)]
 #![feature(stdsimd)]
 #![feature(error_in_core)]
