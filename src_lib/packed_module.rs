@@ -1,6 +1,7 @@
 #![warn(unused_imports)]
 
 use core::mem::transmute;
+use std::intrinsics::needs_drop;
 
 use super::{Cell, Instrument, Module, Pattern, Sample, Vec};
 
@@ -120,31 +121,138 @@ where
         .position(|window| window == needle)
 }
 
-fn compress_channel_stream(input: &[u8]) -> Vec<u8> {
-    let mut result = Vec::new();
+fn find_repeated_subsequence<T>(mut haystack: &[T], needle: &[T]) -> Option<(usize, usize)>
+where
+    for<'a> &'a [T]: PartialEq,
+{
+    let mut first_position = usize::MAX;
+    let mut count = 0;
 
-    let mut best_substr_len = 0;
-    let mut best_substr_offset = 0;
-
-    println!("Looking for longest substring in {} bytes...", input.len());
-
-    for substr_off in 0..input.len() / 2 {
-        for substr_len in 3..(input.len() / 2) - substr_off {
-            let needle = &input[input.len() - substr_len - substr_off..input.len() - substr_off];
-
-            if let Some(substr_offset) =
-                find_subsequence(&input[0..input.len() - substr_len - substr_off], &needle)
-            {
-                if substr_len > best_substr_len {
-                    best_substr_len = substr_len;
-                    best_substr_offset = substr_offset;
-                }
+    loop {
+        if let Some(pos) = haystack.windows(needle.len()).position(|w| w == needle) {
+            if first_position == usize::MAX {
+                first_position = pos;
             }
+
+            count += 1;
+
+            if pos + needle.len() < haystack.len() {
+                haystack = &haystack[pos + needle.len()..];
+            } else {
+                break;
+            }
+        } else {
+            break;
         }
     }
 
-    println!("Best substr len: {}", best_substr_len);
-    println!("Best substr off: {}", best_substr_offset);
+    if first_position == usize::MAX {
+        None
+    } else {
+        Some((first_position, count))
+    }
+}
+
+fn erase_repeated_subsequence<T>(mut haystack: &[T], needle: &[T], marker: &[T]) -> Vec<T>
+where
+    for<'a> &'a [T]: PartialEq,
+    T: Clone,
+{
+    let mut result = Vec::new();
+    result.extend_from_slice(haystack);
+
+    let mut is_first = true;
+    let mut offset = 0;
+
+    loop {
+        if let Some(pos) = (&result[offset..])
+            .windows(needle.len())
+            .position(|w| w == needle)
+        {
+            if is_first {
+                is_first = false;
+                offset = pos + needle.len();
+            } else {
+                let mut new_result = Vec::<T>::new();
+                new_result.extend_from_slice(&result[0..offset + pos]);
+                new_result.extend_from_slice(&marker);
+                new_result.extend_from_slice(&result[offset + pos + needle.len()..]);
+
+                result = new_result;
+            }
+        } else {
+            break;
+        }
+    }
+
+    return result;
+}
+
+fn compress_channel_stream(input: &[u8]) -> Vec<u8> {
+    let mut result = Vec::new();
+    result.extend_from_slice(&input);
+
+    println!("Compressing channel stream of {} bytes...", result.len());
+
+    loop {
+        let mut best_substr_len = 0;
+        let mut best_substr_offset = 0;
+        let mut best_substr_bytes = 0;
+
+        for offset in 0..result.len() - 4 {
+            for len in 4..result.len() {
+                if (offset + len >= result.len()) || (offset + len + len > result.len()) {
+                    break;
+                }
+
+                let end_index = (offset + len).min(result.len());
+
+                let haystack = &result[offset + len..];
+                let needle = &result[offset..end_index];
+
+                if needle.len() >= haystack.len() {
+                    break;
+                }
+
+                if let Some((pos, count)) = find_repeated_subsequence(haystack, needle) {
+                    let mut bytes = len * (count - 1);
+                    if bytes <= 4 * (count - 1) {
+                        bytes = 0;
+                    } else {
+                        bytes -= 4 * (count - 1);
+                    }
+
+                    if bytes > best_substr_bytes {
+                        best_substr_offset = offset;
+                        best_substr_len = len;
+                        best_substr_bytes = bytes;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+
+        /*
+        println!("Offset: {}", best_substr_offset);
+        println!("Length: {}", best_substr_len);
+        println!(" Bytes: {}", best_substr_bytes);
+        */
+
+        if best_substr_bytes > 0 {
+            let marker: [u8; 3] = [64, 64, 64];
+
+            result = erase_repeated_subsequence(
+                &result,
+                &result[best_substr_offset..best_substr_offset + best_substr_len],
+                &marker,
+            );
+        } else {
+            break;
+        }
+    }
+
+    println!("Compressed to {} bytes!", result.len());
 
     result
 }
@@ -163,15 +271,30 @@ impl<'a> PackedModule<'a> {
             }
         }
 
+        let mut orig_channel_stream_size = 0;
+        let mut comp_channel_stream_size = 0;
+
         for i in 0..module.num_channels {
+            println!("Channel {} of {}:", i + 1, module.num_channels);
             //write_marker("[CHANNEL]", packed_data);
-            //write_channel_stream(module, i, packed_data);
+
+            let mut channel_stream = Vec::<u8>::new();
+            write_channel_stream(module, i, &mut channel_stream);
+            orig_channel_stream_size += channel_stream.len();
+
+            let comp_channel_stream = compress_channel_stream(&channel_stream);
+            comp_channel_stream_size += comp_channel_stream.len();
+            packed_data.extend_from_slice(&comp_channel_stream);
         }
 
-        let mut channel_stream = Vec::<u8>::new();
-        write_channel_stream(module, 0, &mut channel_stream);
-
-        packed_data.append(&mut compress_channel_stream(&channel_stream));
+        println!(
+            "Orig channel stream size: {} bytes",
+            orig_channel_stream_size
+        );
+        println!(
+            "Comp channel stream size: {} bytes",
+            comp_channel_stream_size
+        );
 
         PackedModule { data: packed_data }
     }
