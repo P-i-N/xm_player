@@ -17,6 +17,9 @@ use core::fmt::Display;
 
 mod fixed;
 
+mod utils;
+use utils::ButterworthFilter;
+
 mod module;
 pub use module::Module;
 
@@ -72,6 +75,18 @@ mod math {
 
     pub fn sin(value: f32) -> f32 {
         value.sin()
+    }
+
+    pub fn cos(value: f32) -> f32 {
+        value.cos()
+    }
+
+    pub fn sqrt(value: f32) -> f32 {
+        value.sqrt()
+    }
+
+    pub fn exp(value: f32) -> f32 {
+        value.exp()
     }
 }
 

@@ -109,13 +109,14 @@ fn on_player_tick(player: &Player, dur: Duration) {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let embedded_data = include_bytes!("../deadlock.xm");
+    let embedded_data = include_bytes!("../unreal.xm");
 
     const SAMPLE_RATE: usize = 48000;
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());
 
     let module = Module::from_memory(embedded_data)?;
 
+    /*
     let mut packed_data = Vec::<u8>::new();
 
     let packing_params = PackingParams {
@@ -124,30 +125,16 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     };
 
     let _packed_module = PackedModule::from_module(&module, packing_params, &mut packed_data);
-
-    // Write as hex text
-    {
-        let mut hex = Vec::<u8>::new();
-        for b in &packed_data {
-            let s = format!("{:02X}", *b);
-
-            for sb in s.as_bytes() {
-                hex.push(*sb);
-            }
-        }
-
-        std::fs::write("../../song.hex", hex)?;
-    }
-
     std::fs::write("../../song.pxm", packed_data)?;
+    */
 
-    return Ok(());
+    //return Ok(());
 
     let mut player = Player::new(&module, platform.as_ref(), SAMPLE_RATE, 1);
 
     // Benchmark
     println!("Benchmarking...");
-    for _ in 0..10 {
+    for _ in 0..1 {
         let time_start = Instant::now();
         player.benchmark();
         println!("Elapsed time: {} ms", time_start.elapsed().as_millis());

@@ -1,5 +1,6 @@
 use super::math::*;
 use super::player::SongState;
+use super::ButterworthFilter;
 use super::Cell;
 use super::Envelope;
 use super::Fixed;
@@ -81,6 +82,7 @@ pub struct Channel<'a> {
     sample_offset_fp: Fixed,
     final_volume: usize,
     final_panning: usize,
+    pub filter: ButterworthFilter,
 }
 
 impl<'a> Channel<'a> {
@@ -113,6 +115,7 @@ impl<'a> Channel<'a> {
             sample_offset_fp: Fixed::from_u32(0),
             final_volume: 0,
             final_panning: 0,
+            filter: ButterworthFilter::new(),
         }
     }
 
@@ -315,6 +318,9 @@ impl<'a> Channel<'a> {
 
         self.note_frequency = get_frequency(self.note_period - 16.0 * self.vibrato_note_offset);
         self.note_step_fp = Fixed::from_f32(self.note_frequency * self.inv_sample_rate);
+        self.filter = self
+            .filter
+            .copy_with_new_coefs(self.note_frequency * self.inv_sample_rate);
 
         self.final_volume = self.note_volume;
         self.final_panning = self.note_panning;
@@ -357,13 +363,13 @@ impl<'a> Channel<'a> {
     }
 
     pub fn get_current_stereo_volume(&self) -> (u8, u8) {
-        let mut vr = self.final_panning.clamp(0, 255) as i32;
-        let mut vl = 255 - vr;
+        let p = (self.final_panning.clamp(0, 255) as f32) / 255.0;
 
-        vr = (vr * (self.final_volume as i32)) / 128;
-        vl = (vl * (self.final_volume as i32)) / 128;
+        // Square law panning
+        let vr = sqrt(p) * (self.final_volume as f32);
+        let vl = sqrt(1.0 - p) * (self.final_volume as f32);
 
-        (vl.clamp(0, 255) as u8, vr.clamp(0, 255) as u8)
+        (vl.clamp(0.0, 255.0) as u8, vr.clamp(0.0, 255.0) as u8)
     }
 
     pub fn tick(

@@ -241,18 +241,38 @@ impl<'a> Player<'a> {
             );
 
             if vl > 0 && vr > 0 {
+                const USE_FILTER: bool = true;
+
                 unsafe {
                     let mut dst_ptr = self.mix_buffer.as_mut_ptr();
 
-                    for s in &self.channel_buffer {
-                        let vl = s.unchecked_mul(vl as i32).unchecked_shr(8) as i16;
-                        let vr = s.unchecked_mul(vr as i32).unchecked_shr(8) as i16;
+                    if USE_FILTER {
+                        let mut filter = channel.filter;
 
-                        *dst_ptr = (*dst_ptr).saturating_add(vl);
-                        dst_ptr = dst_ptr.add(1);
+                        for &s in &self.channel_buffer {
+                            let sf = filter.process_i32(s);
+                            let vl = sf.unchecked_mul(vl as i32).unchecked_shr(8) as i16;
+                            let vr = sf.unchecked_mul(vr as i32).unchecked_shr(8) as i16;
 
-                        *dst_ptr = (*dst_ptr).saturating_add(vr);
-                        dst_ptr = dst_ptr.add(1);
+                            *dst_ptr = (*dst_ptr).saturating_add(vl);
+                            dst_ptr = dst_ptr.add(1);
+
+                            *dst_ptr = (*dst_ptr).saturating_add(vr);
+                            dst_ptr = dst_ptr.add(1);
+                        }
+
+                        channel.filter = filter;
+                    } else {
+                        for &s in &self.channel_buffer {
+                            let vl = s.unchecked_mul(vl as i32).unchecked_shr(8) as i16;
+                            let vr = s.unchecked_mul(vr as i32).unchecked_shr(8) as i16;
+
+                            *dst_ptr = (*dst_ptr).saturating_add(vl);
+                            dst_ptr = dst_ptr.add(1);
+
+                            *dst_ptr = (*dst_ptr).saturating_add(vr);
+                            dst_ptr = dst_ptr.add(1);
+                        }
                     }
                 }
             }
