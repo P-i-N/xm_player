@@ -16,6 +16,14 @@ impl<'a> BinaryReader<'a> {
         self.pos = (self.pos + num_bytes).min(self.data.len());
     }
 
+    pub fn peek_u8(&self) -> u8 {
+        if self.pos >= self.data.len() {
+            return 0;
+        }
+
+        self.data[self.pos]
+    }
+
     pub fn read_u8(&mut self) -> u8 {
         if self.pos >= self.data.len() {
             return 0;

@@ -28,12 +28,12 @@ impl SymbolPrefixBits for u8 {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Hash)]
 pub enum Symbol {
     Unknown,
     Dictionary(u8),
     Reference(u8),
-    RLE(u8),
+    RLE(u16),
     RowEvent(Row),
 }
 
@@ -131,8 +131,11 @@ impl Symbol {
                 bw.write_u8(0b_1000_0000 | (*index));
             }
             Symbol::RLE(length) => {
-                assert!(*length > 0 && *length <= 32);
-                bw.write_u8(0b_1100_0000 | (length - 1))
+                let mut l = *length;
+                while l > 0 {
+                    bw.write_u8(0b_1100_0000 | ((l as u8) & 0b_0001_1111));
+                    l >>= 5;
+                }
             }
             Symbol::RowEvent(row) => {
                 let mut packing_mask: u8 = 0b_1110_0000;

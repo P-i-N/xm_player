@@ -152,10 +152,10 @@ impl Builder {
             channel_index, orig_encoding_size
         );
 
-        //channel.compress_with_dict();
-        //channel.compress_rows_rle(false);
-        //channel.compress_repeated_parts();
-        //channel.compress_rows_rle(true);
+        channel.compress_with_dict();
+        channel.compress_rows_rle(false);
+        channel.compress_repeated_parts();
+        channel.compress_rows_rle(true);
 
         let current_encoding_size = channel.get_total_encoding_size();
 

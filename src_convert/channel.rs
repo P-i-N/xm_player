@@ -1,3 +1,4 @@
+use std::hash::Hasher;
 use std::{collections::HashMap, hash::Hash};
 
 use super::*;
@@ -9,15 +10,21 @@ use xm_player::Symbol;
 pub struct Channel {
     pub index: usize,
     pub symbols: Vec<Symbol>,
-    pub byte_offsets: Vec<usize>,
     pub dict: Vec<Row>,
     pub slices: Vec<(u16, u8)>,
+    pub search_map: HashMap<u64, Vec<usize>>,
 }
 
 impl Channel {
-    fn drain_rle_range(&mut self, begin: usize, num_repeats: usize) {
+    fn replace_rle_range(&mut self, begin: usize, num_repeats: usize) -> usize {
+        let rle_symbols = 1;
         self.symbols.drain(begin + 1..begin + num_repeats);
-        self.symbols[begin] = Symbol::RLE(num_repeats as u8);
+
+        if num_repeats <= 32 {
+            self.symbols[begin] = Symbol::RLE(num_repeats as u8);
+        }
+
+        rle_symbols
     }
 
     pub fn compress_rows_rle(&mut self, compress_references: bool) {
@@ -32,8 +39,7 @@ impl Channel {
 
             if symbol == prev_symbol && (compress_references == true || !symbol.is_reference()) {
                 if num_repeats == 32 {
-                    self.drain_rle_range(begin, num_repeats);
-                    i = begin + 1;
+                    i = begin + self.replace_rle_range(begin, num_repeats);
                     num_repeats = 0;
                 }
 
@@ -45,8 +51,7 @@ impl Channel {
                 total_num_repeats += 1;
             } else {
                 if num_repeats > 0 {
-                    self.drain_rle_range(begin, num_repeats);
-                    i = begin + 1;
+                    i = begin + self.replace_rle_range(begin, num_repeats);
                     num_repeats = 0;
                 }
             }
@@ -56,7 +61,7 @@ impl Channel {
         }
 
         if num_repeats > 0 {
-            self.drain_rle_range(begin, num_repeats);
+            self.replace_rle_range(begin, num_repeats);
         }
 
         if total_num_repeats > 0 {
@@ -95,16 +100,6 @@ impl Channel {
         count
     }
 
-    fn rebuild_byte_offsets(&mut self) {
-        self.byte_offsets.clear();
-        let mut offset = 0;
-
-        for row in &self.symbols {
-            self.byte_offsets.push(offset);
-            offset += row.get_encoding_size();
-        }
-    }
-
     pub fn get_total_encoding_size(&self) -> usize {
         let mut result = 0;
 
@@ -125,35 +120,95 @@ impl Channel {
         true
     }
 
+    fn symbol_slice_hash(slice: &[Symbol]) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        slice.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn rebuild_search_map(&mut self) {
+        if self.symbols.len() < 4 {
+            self.search_map.clear();
+            return;
+        }
+
+        let mut search_map = HashMap::<u64, Vec<usize>>::new();
+
+        for pos in 0..self.symbols.len() - 4 {
+            let hash = Channel::symbol_slice_hash(&self.symbols[pos..pos + 4]);
+
+            if let Some(v) = search_map.get_mut(&hash) {
+                v.push(pos);
+            } else {
+                search_map.insert(hash, vec![pos]);
+            }
+        }
+
+        self.search_map = search_map;
+    }
+
     pub fn compress_repeated_parts(&mut self) {
-        while self.slices.len() < 64 {
-            self.rebuild_byte_offsets();
+        let mut repeated_positions = Vec::new();
+        let mut best_repeated_positions = Vec::new();
+
+        while self.slices.len() < 64 && self.symbols.len() >= 8 {
+            self.rebuild_search_map();
 
             let mut best_start = 0;
             let mut best_length = 0;
             let mut best_count = 0;
             let mut best_total_saved_bytes = 0;
 
-            for length in (4..259).rev() {
-                let end = (self.symbols.len() as i32) - ((length * 2) as i32);
-                if end <= 0 {
+            best_repeated_positions.clear();
+
+            for start in 0..self.symbols.len() - 4 {
+                // Use hash of first 4 symbols as a lookup to search_map to get a vector
+                // of potential matching positions
+                let slice_header = &self.symbols[start..start + 4];
+                if !Channel::only_row_events_or_dictionary(&slice_header) {
                     continue;
                 }
 
-                for start in 0..end as usize {
-                    if !Channel::only_row_events_or_dictionary(&self.symbols[start..start + length])
-                    {
-                        continue;
-                    }
+                let hash = Channel::symbol_slice_hash(&slice_header);
 
-                    let count = self.find_number_of_repeats(start, length);
-                    if count > 0 {
-                        let total_saved_bytes = length * count;
-                        if total_saved_bytes > best_total_saved_bytes {
-                            best_start = start;
-                            best_length = length;
-                            best_count = count;
-                            best_total_saved_bytes = total_saved_bytes;
+                if let Some(search_positions) = self.search_map.get(&hash) {
+                    for length in (4..259) {
+                        if start + length * 2 > self.symbols.len() {
+                            break;
+                        }
+
+                        let slice = &self.symbols[start..start + length];
+                        if !Channel::only_row_events_or_dictionary(&slice) {
+                            continue;
+                        }
+
+                        let mut count = 0;
+                        let mut search_offset = start;
+                        repeated_positions.clear();
+
+                        for &pos in search_positions {
+                            if pos <= search_offset || pos + length > self.symbols.len() {
+                                continue;
+                            }
+
+                            if &self.symbols[pos..pos + length] == slice {
+                                count += 1;
+                                search_offset = pos + length - 1;
+                                repeated_positions.push(pos);
+                            }
+                        }
+
+                        if count > 0 {
+                            let total_saved_bytes = (length - 1) * count;
+                            if total_saved_bytes > best_total_saved_bytes {
+                                best_start = start;
+                                best_length = length;
+                                best_count = count;
+                                best_total_saved_bytes = total_saved_bytes;
+
+                                best_repeated_positions.clear();
+                                best_repeated_positions.extend_from_slice(&repeated_positions);
+                            }
                         }
                     }
                 }
@@ -167,10 +222,26 @@ impl Channel {
 
                 // Search offset
                 let mut offset = best_start + best_length;
-                let mut ref_index = 0;
+
+                let mut new_symbols = Vec::<Symbol>::new();
+                let mut prev_pos = 0;
 
                 // Erase all repeated occurences except for the first one. Replace erased
                 // parts with back-reference to the first part.
+                for &pos in &best_repeated_positions {
+                    new_symbols.extend_from_slice(&self.symbols[prev_pos..pos]);
+
+                    // Insert reference instead of subslice
+                    new_symbols.push(Symbol::Reference((self.slices.len() - 1) as u8));
+
+                    prev_pos = pos + best_length;
+                }
+
+                // Append rest of the symbols
+                new_symbols.extend_from_slice(&self.symbols[prev_pos..]);
+                self.symbols = new_symbols;
+
+                /*
                 while ref_index < best_count {
                     if let Some(pos) = self.symbols[offset..]
                         .windows(best_length)
@@ -192,6 +263,7 @@ impl Channel {
 
                     ref_index += 1;
                 }
+                */
             } else {
                 break;
             }
@@ -258,29 +330,43 @@ impl Channel {
     }
 
     pub fn write(&self, bw: &mut BinaryWriter) {
-        bw.write_u8(self.dict.len() as u8);
+        // Event dictionary
+        {
+            bw.write_u8(self.dict.len() as u8);
+            for row in &self.dict {
+                let symbol = Symbol::RowEvent(*row);
+                symbol.write(bw);
+            }
+        }
 
-        for row in &self.dict {
-            let symbol = Symbol::RowEvent(*row);
+        // References
+        {
+            bw.write_u8(self.slices.len() as u8);
+            for slice in &self.slices {
+                bw.write_u16(slice.0);
+                bw.write_u8(slice.1);
+            }
+        }
+
+        // Symbols
+        for symbol in &self.symbols {
             symbol.write(bw);
         }
+    }
+}
 
-        bw.write_u8(self.slices.len() as u8);
+#[cfg(test)]
+mod tests {
+    use super::Channel;
 
-        for slice in &self.slices {
-            bw.write_u16(slice.0);
-            bw.write_u8(slice.1);
+    fn notes_from_string(channel: &mut Channel, notes: &str) {
+        for ch in notes.chars() {
+            //
         }
+    }
 
-        let mut offsets = Vec::<usize>::new();
-        let base_pos = bw.pos();
-
-        for i in 0..self.symbols.len() {
-            let mut symbol = self.symbols[i];
-            let offset = bw.pos() - base_pos;
-            offsets.push(offset);
-
-            symbol.write(bw);
-        }
+    #[test]
+    pub fn compress_decompress_eq() {
+        //
     }
 }

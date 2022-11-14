@@ -1,13 +1,12 @@
 use super::{NibbleTest, Vec};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub struct Row {
     pub note: u8,
     pub instrument: u8,
     pub volume: u8,
     pub effect_type: u8,
     pub effect_param: u8,
-    pub offset: u16,
 }
 
 impl Row {
@@ -18,7 +17,6 @@ impl Row {
             volume: 0,
             effect_type: 0,
             effect_param: 0,
-            offset: 0,
         }
     }
 
