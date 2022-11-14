@@ -17,6 +17,18 @@
 			"preLaunchTask": "rust: cargo build"
 		},
 		{
+			"name": "xm_convert Debug",
+			"type": "cppvsdbg",
+			"request": "launch",
+			"program": "${workspaceRoot}/target/debug/xm_convert.exe",
+			"args": [],
+			"stopAtEntry": false,
+			"cwd": "${workspaceRoot}/target/debug",
+			"environment": [],
+			"console": "integratedTerminal",
+			"preLaunchTask": "rust: cargo build"
+		},		
+		{
 			"name": "Release",
 			"type": "cppvsdbg",
 			"request": "launch",

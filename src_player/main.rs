@@ -109,7 +109,7 @@ fn on_player_tick(player: &Player, dur: Duration) {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let embedded_data = include_bytes!("../unreal.xm");
+    let embedded_data = include_bytes!("../alf.xm");
 
     const SAMPLE_RATE: usize = 48000;
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());

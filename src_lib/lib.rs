@@ -20,11 +20,14 @@ mod fixed;
 mod utils;
 use utils::ButterworthFilter;
 
+mod symbol;
+pub use symbol::Symbol;
+
 mod module;
 pub use module::Module;
 
-mod cell;
-pub use cell::Cell;
+mod row;
+pub use row::Row;
 
 mod pattern;
 pub use pattern::Pattern;
@@ -46,7 +49,10 @@ mod player;
 pub use player::Player;
 
 mod binary_reader;
-use binary_reader::BinaryReader;
+pub use binary_reader::BinaryReader;
+
+mod binary_writer;
+pub use binary_writer::BinaryWriter;
 
 mod platform;
 pub use platform::DummyInterface;
@@ -87,6 +93,14 @@ mod math {
 
     pub fn exp(value: f32) -> f32 {
         value.exp()
+    }
+
+    pub fn sign_u8(value: u8) -> u8 {
+        if value == 0 {
+            0
+        } else {
+            1
+        }
     }
 }
 
@@ -135,4 +149,16 @@ impl NibbleTest<u8> for u8 {
     fn test_high_nibble(&self, value: Self) -> bool {
         (self & 0xF0) == value
     }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+#[repr(C, packed)]
+pub struct SampleDesc {
+    //
+}
+
+#[repr(C, packed)]
+pub struct InstrumentDesc {
+    //
 }

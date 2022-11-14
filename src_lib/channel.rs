@@ -1,7 +1,6 @@
 use super::math::*;
 use super::player::SongState;
 use super::ButterworthFilter;
-use super::Cell;
 use super::Envelope;
 use super::Fixed;
 use super::Instrument;
@@ -9,6 +8,7 @@ use super::LoopType;
 use super::Module;
 use super::NibbleTest;
 use super::Rc;
+use super::Row;
 use super::Sample;
 
 fn get_frequency(period: f32) -> f32 {
@@ -60,7 +60,7 @@ pub struct Channel<'a> {
     pub index: usize,
     pub mute: bool,
     inv_sample_rate: f32,
-    row: Cell,
+    row: Row,
     sample: Option<Rc<Sample>>,
     instrument: Option<Rc<Instrument>>,
     note: f32,
@@ -93,7 +93,7 @@ impl<'a> Channel<'a> {
             index,
             mute: false,
             inv_sample_rate: 1.0 / (sample_rate as f32),
-            row: Cell::new(),
+            row: Row::new(),
             sample: None,
             instrument: None,
             note: 0.0,
@@ -175,7 +175,7 @@ impl<'a> Channel<'a> {
         self.sample = None;
     }
 
-    fn tick_new_row(&mut self, row: Cell) {
+    fn tick_new_row(&mut self, row: Row) {
         let mut keep_period = false;
         let mut keep_volume = false;
         let mut keep_position = false;
@@ -374,7 +374,7 @@ impl<'a> Channel<'a> {
 
     pub fn tick(
         &mut self,
-        row: Cell,
+        row: Row,
         song_state: &SongState,
         row_tick_index: usize,
         buffer: &mut [i32],

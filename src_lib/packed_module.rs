@@ -3,7 +3,7 @@
 use core::mem::transmute;
 use std::intrinsics::needs_drop;
 
-use super::{Cell, Instrument, Module, Pattern, Sample, Vec};
+use super::{Instrument, Module, Pattern, Row, Sample, Vec};
 
 pub struct PackedModule<'a> {
     data: &'a [u8],
@@ -71,7 +71,7 @@ fn write_sample(sample: &Sample, params: &PackingParams, packed_data: &mut Vec<u
 }
 
 fn write_channel_stream(module: &Module, channel_index: usize, packed_data: &mut Vec<u8>) {
-    let mut prev_cell = Cell::new();
+    let mut prev_cell = Row::new();
     let mut num_repeat: u8 = 0;
 
     for p in &module.patterns {

@@ -1,9 +1,9 @@
-use super::{BinaryReader, BitTest, Box, Cell, Error, Vec};
+use super::{BinaryReader, BitTest, Box, Error, Row, Vec};
 
 #[derive(Clone, Default)]
 pub struct Pattern {
     pub num_rows: usize,
-    pub channels: Vec<Vec<Cell>>,
+    pub channels: Vec<Vec<Row>>,
 }
 
 impl Pattern {
@@ -15,7 +15,7 @@ impl Pattern {
 
         self.num_rows = br.read_u16() as usize;
         for i in 0..self.channels.len() {
-            self.channels[i].resize(self.num_rows, Cell::new());
+            self.channels[i].resize(self.num_rows, Row::new());
         }
 
         let packed_data_size = br.read_u16() as usize;
@@ -29,7 +29,7 @@ impl Pattern {
             i += 1;
 
             let row = &mut self.channels[channel][line];
-            *row = Cell::new();
+            *row = Row::new();
 
             // Packed row item
             if note.test_bitmask(0x80) {
@@ -78,16 +78,16 @@ impl Pattern {
         Ok(())
     }
 
-    pub fn get_channel_row(&self, channel_index: usize, row_index: usize) -> Cell {
+    pub fn get_channel_row(&self, channel_index: usize, row_index: usize) -> Row {
         if channel_index >= self.channels.len() {
-            return Cell::new();
+            return Row::new();
         }
 
         let rows = &self.channels[channel_index];
         if row_index < rows.len() {
             rows[row_index]
         } else {
-            Cell::new()
+            Row::new()
         }
     }
 }

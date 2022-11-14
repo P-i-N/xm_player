@@ -1,28 +1,166 @@
-pub struct ChannelStream {
-    data: Vec<u8>,
+use super::Channel;
+use xm_player::BinaryWriter;
+use xm_player::Row;
+use xm_player::Symbol;
+
+pub struct Pattern {
+    pub num_rows: usize,
+    pub channel_rows: Vec<Vec<Row>>,
+}
+
+#[derive(Default)]
+pub struct Envelope {
+    pub points: Vec<(u32, u32)>,
+    pub sustain: usize,
+    pub loop_start: usize,
+    pub loop_end: usize,
+}
+
+#[derive(Default)]
+pub struct Vibrato {
+    pub func: u32,
+    pub sweep: u32,
+    pub depth: u32,
+    pub rate: u32,
+}
+
+#[derive(Default)]
+pub struct Sample {
+    pub data: Vec<u8>,
+    pub is_16bit: bool,
+    pub loop_start: u32,
+    pub loop_end: u32,
+    pub loop_pingpong: bool,
+    pub volume: u8,
+    pub panning: u8,
+    pub relative_note: i8,
+    pub finetune: i32,
+}
+
+pub struct Instrument {
+    pub sample_keymap: [usize; 96],
+    pub volume_envelope: Envelope,
+    pub panning_envelope: Envelope,
+    pub vibrato: Vibrato,
+    pub fadeout: u32,
+    pub samples: Vec<Sample>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct Range<T> {
+    pub min: T,
+    pub max: T,
+    pub default: T,
+}
+
+impl<T: Copy> Range<T> {
+    pub fn set_all(&mut self, value: T) {
+        self.min = value;
+        self.max = value;
+        self.default = value;
+    }
 }
 
 // Universal Module Builder
 pub struct Builder {
-    // Number of channels in the module
-    num_channels: usize,
+    // Number of channels
+    pub num_channels: usize,
 
-    // Number of samples
-    num_samples: usize,
+    // Patterns (even unused ones)
+    pub patterns: Vec<Pattern>,
 
-    // Number of instruments
-    num_instruments: usize,
+    // Song pattern order
+    pub pattern_order: Vec<usize>,
 
-    channel_streams: Vec<ChannelStream>,
+    // Restart position index (in pattern_order vector)
+    pub restart_position: usize,
+
+    // Initial song tempo
+    pub tempo: Range<usize>,
+
+    // Initial song BPM
+    pub bpm: Range<usize>,
+
+    // Instruments
+    pub instruments: Vec<Instrument>,
+
+    // Rows of note events for individual channels
+    channels: Vec<Channel>,
 }
 
 impl Builder {
     pub fn new() -> Self {
         Self {
             num_channels: 0,
-            num_samples: 0,
-            num_instruments: 0,
-            channel_streams: Vec::new(),
+            patterns: Vec::new(),
+            pattern_order: Vec::new(),
+            restart_position: 0,
+            tempo: Range {
+                min: 6,
+                max: 6,
+                default: 6,
+            },
+            bpm: Range {
+                min: 120,
+                max: 120,
+                default: 120,
+            },
+            instruments: Vec::new(),
+            channels: Vec::new(),
         }
+    }
+
+    pub fn build(&mut self) -> Vec<u8> {
+        let mut result = Vec::new();
+        let mut bw = BinaryWriter::new(&mut result);
+
+        self.channels.clear();
+
+        for channel_index in 0..self.num_channels {
+            let channel = self.extract_channel(channel_index);
+            channel.write(&mut bw);
+
+            self.channels.push(channel);
+        }
+
+        result
+    }
+
+    // Separate individual pattern rows into individual channel row streams
+    fn extract_channel(&self, channel_index: usize) -> Channel {
+        let mut channel = Channel::default();
+        channel.index = channel_index;
+
+        for poi in 0..self.pattern_order.len() {
+            let pattern_index = self.pattern_order[poi];
+            let pattern = &self.patterns[pattern_index];
+
+            for row_index in 0..pattern.num_rows {
+                if row_index < pattern.channel_rows[channel_index].len() {
+                    let row = &pattern.channel_rows[channel_index][row_index];
+                    channel.symbols.push(Symbol::RowEvent(*row));
+                } else {
+                    channel.symbols.push(Symbol::RowEvent(Row::new()));
+                }
+            }
+        }
+
+        let orig_encoding_size = channel.get_total_encoding_size();
+
+        println!(
+            "Processing channel {}: {} bytes",
+            channel_index, orig_encoding_size
+        );
+
+        //channel.compress_with_dict();
+        //channel.compress_rows_rle(false);
+        //channel.compress_repeated_parts();
+        //channel.compress_rows_rle(true);
+
+        let current_encoding_size = channel.get_total_encoding_size();
+
+        println!("- final size: {} bytes", current_encoding_size);
+
+        channel
     }
 }

@@ -12,6 +12,10 @@ impl<'a> BinaryReader<'a> {
         BinaryReader { data, pos: 0 }
     }
 
+    pub fn skip(&mut self, num_bytes: usize) {
+        self.pos = (self.pos + num_bytes).min(self.data.len());
+    }
+
     pub fn read_u8(&mut self) -> u8 {
         if self.pos >= self.data.len() {
             return 0;
