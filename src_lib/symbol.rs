@@ -80,7 +80,7 @@ impl Symbol {
     }
 
     pub fn read(&mut self, br: &mut BinaryReader) {
-        let b = br.read_u8();
+        let mut b = br.read_u8();
 
         match b.symbol_prefix() {
             SymbolPrefix::Dictionary => {
@@ -90,7 +90,21 @@ impl Symbol {
                 *self = Symbol::Reference(b & 0b_0011_1111);
             }
             SymbolPrefix::RLE => {
-                *self = Symbol::RLE((b & 0b_0001_1111) + 1);
+                let mut length = 0;
+                let mut num_rle_symbols = 0;
+
+                loop {
+                    length |= ((b & 0b_0001_1111) as u16) << (num_rle_symbols * 5);
+                    match br.peek_u8().symbol_prefix() {
+                        SymbolPrefix::RLE => {}
+                        _ => break,
+                    }
+
+                    b = br.read_u8();
+                    num_rle_symbols += 1;
+                }
+
+                *self = Symbol::RLE(length);
             }
             SymbolPrefix::RowEvent => {
                 let mut row = Row::new();
@@ -133,7 +147,7 @@ impl Symbol {
             Symbol::RLE(length) => {
                 let mut l = *length;
                 while l > 0 {
-                    bw.write_u8(0b_1100_0000 | ((l as u8) & 0b_0001_1111));
+                    bw.write_u8(0b_1100_0000 | ((l & 0b_0001_1111) as u8));
                     l >>= 5;
                 }
             }

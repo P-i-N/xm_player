@@ -19,15 +19,11 @@ impl Channel {
     fn replace_rle_range(&mut self, begin: usize, num_repeats: usize) -> usize {
         let rle_symbols = 1;
         self.symbols.drain(begin + 1..begin + num_repeats);
-
-        if num_repeats <= 32 {
-            self.symbols[begin] = Symbol::RLE(num_repeats as u8);
-        }
-
+        self.symbols[begin] = Symbol::RLE(num_repeats as u16);
         rle_symbols
     }
 
-    pub fn compress_rows_rle(&mut self, compress_references: bool) {
+    pub fn compress_rows_rle(&mut self) {
         let mut prev_symbol = Symbol::Unknown;
         let mut begin: usize = 0;
         let mut num_repeats: usize = 0;
@@ -37,12 +33,7 @@ impl Channel {
         while i < self.symbols.len() {
             let symbol = self.symbols[i];
 
-            if symbol == prev_symbol && (compress_references == true || !symbol.is_reference()) {
-                if num_repeats == 32 {
-                    i = begin + self.replace_rle_range(begin, num_repeats);
-                    num_repeats = 0;
-                }
-
+            if symbol == prev_symbol && symbol.is_row_event_or_dictionary() {
                 if num_repeats == 0 {
                     begin = i;
                 }
@@ -70,34 +61,6 @@ impl Channel {
                 self.get_total_encoding_size()
             );
         }
-    }
-
-    fn find_number_of_repeats(&self, mut start: usize, length: usize) -> usize {
-        if start + length * 2 > self.symbols.len() {
-            return 0;
-        }
-
-        let slice = &self.symbols[start..start + length];
-        let mut count = 0;
-
-        loop {
-            if let Some(pos) = self.symbols[start + length..]
-                .windows(length)
-                .position(|w| w == slice)
-            {
-                count += 1;
-
-                if start + pos + length < self.symbols.len() {
-                    start += pos + length;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        count
     }
 
     pub fn get_total_encoding_size(&self) -> usize {
@@ -172,28 +135,31 @@ impl Channel {
                 let hash = Channel::symbol_slice_hash(&slice_header);
 
                 if let Some(search_positions) = self.search_map.get(&hash) {
-                    for length in (4..259) {
+                    for length in (4..260) {
                         if start + length * 2 > self.symbols.len() {
                             break;
                         }
 
-                        let slice = &self.symbols[start..start + length];
-                        if !Channel::only_row_events_or_dictionary(&slice) {
+                        // Should not lay inside existing slice
+                        for slice in &self.slices {}
+
+                        let slice_footer = &self.symbols[start + 4..start + length];
+                        if !Channel::only_row_events_or_dictionary(&slice_footer) {
                             continue;
                         }
 
                         let mut count = 0;
-                        let mut search_offset = start;
+                        let mut search_offset = start + length;
                         repeated_positions.clear();
 
                         for &pos in search_positions {
-                            if pos <= search_offset || pos + length > self.symbols.len() {
+                            if pos < search_offset || pos + length > self.symbols.len() {
                                 continue;
                             }
 
-                            if &self.symbols[pos..pos + length] == slice {
+                            if &self.symbols[pos + 4..pos + length] == slice_footer {
                                 count += 1;
-                                search_offset = pos + length - 1;
+                                search_offset = pos + length;
                                 repeated_positions.push(pos);
                             }
                         }
@@ -218,12 +184,8 @@ impl Channel {
                 self.slices
                     .push((best_start as u16, (best_length - 4) as u8));
 
-                let slice = self.symbols[best_start..best_start + best_length].to_vec();
-
-                // Search offset
-                let mut offset = best_start + best_length;
-
                 let mut new_symbols = Vec::<Symbol>::new();
+                let mut new_slices = self.slices.clone();
                 let mut prev_pos = 0;
 
                 // Erase all repeated occurences except for the first one. Replace erased
@@ -234,39 +196,22 @@ impl Channel {
                     // Insert reference instead of subslice
                     new_symbols.push(Symbol::Reference((self.slices.len() - 1) as u8));
 
+                    for slice in &mut new_slices {
+                        //
+                    }
+
                     prev_pos = pos + best_length;
                 }
 
                 // Append rest of the symbols
                 new_symbols.extend_from_slice(&self.symbols[prev_pos..]);
                 self.symbols = new_symbols;
-
-                /*
-                while ref_index < best_count {
-                    if let Some(pos) = self.symbols[offset..]
-                        .windows(best_length)
-                        .position(|w| w == slice)
-                    {
-                        // Symbols with this pattern removed
-                        let mut new_symbols = Vec::<Symbol>::new();
-                        new_symbols.extend_from_slice(&self.symbols[0..offset + pos]);
-
-                        // Insert reference instead of subslice
-                        new_symbols.push(Symbol::Reference((self.slices.len() - 1) as u8));
-
-                        // Append rest of the symbols
-                        new_symbols.extend_from_slice(&self.symbols[offset + pos + best_length..]);
-
-                        self.symbols = new_symbols;
-                        offset += 1;
-                    }
-
-                    ref_index += 1;
-                }
-                */
+                self.slices = new_slices;
             } else {
                 break;
             }
+
+            break;
         }
 
         println!(
@@ -322,16 +267,20 @@ impl Channel {
             }
         }
 
+        self.dict = Vec::from_iter(notes.iter().map(|&(row, _)| row));
+
         println!(
             "- after applied dictionary: {} bytes, dict. size={}",
             self.get_total_encoding_size(),
-            dict.len()
+            self.dict.len()
         );
     }
 
     pub fn write(&self, bw: &mut BinaryWriter) {
         // Event dictionary
         {
+            println!("- dictionary events: {}", self.dict.len());
+
             bw.write_u8(self.dict.len() as u8);
             for row in &self.dict {
                 let symbol = Symbol::RowEvent(*row);
@@ -341,6 +290,8 @@ impl Channel {
 
         // References
         {
+            println!("- references: {}", self.slices.len());
+
             bw.write_u8(self.slices.len() as u8);
             for slice in &self.slices {
                 bw.write_u16(slice.0);
@@ -353,10 +304,46 @@ impl Channel {
             symbol.write(bw);
         }
     }
+
+    pub fn unpack_symbols(&self) -> Vec<Symbol> {
+        let mut result = Vec::new();
+        //let mut stack = Vec::new();
+
+        let mut i = 0;
+        while i < self.symbols.len() {
+            match &self.symbols[i] {
+                Symbol::Dictionary(index) => {
+                    result.push(Symbol::RowEvent(self.dict[*index as usize]));
+                }
+                Symbol::RowEvent(row) => {
+                    result.push(Symbol::RowEvent(*row));
+                }
+                Symbol::RLE(length) => {
+                    let repeated_symbol = result.last().unwrap().clone();
+                    for _ in 0..*length {
+                        result.push(repeated_symbol);
+                    }
+                }
+                Symbol::Reference(index) => {
+                    let slice = self.slices[*index as usize];
+                    for i in 0..(slice.1 as usize) + 4 {
+                        let ref_symbol = self.symbols[(slice.0 as usize) + i].clone();
+                        result.push(ref_symbol);
+                    }
+                }
+                _ => {}
+            }
+            //
+            i = i + 1;
+        }
+
+        result
+    }
 }
 
-#[cfg(test)]
-mod tests {
+pub mod tests {
+    use xm_player::Symbol;
+
     use super::Channel;
 
     fn notes_from_string(channel: &mut Channel, notes: &str) {

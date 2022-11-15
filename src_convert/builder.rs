@@ -152,10 +152,15 @@ impl Builder {
             channel_index, orig_encoding_size
         );
 
-        channel.compress_with_dict();
-        channel.compress_rows_rle(false);
+        // Unpacked symbols
+        let orig_symbols = channel.symbols.clone();
+
+        channel.compress_rows_rle();
         channel.compress_repeated_parts();
-        channel.compress_rows_rle(true);
+        channel.compress_with_dict();
+
+        let unpacked_symbols = channel.unpack_symbols();
+        assert!(orig_symbols == unpacked_symbols);
 
         let current_encoding_size = channel.get_total_encoding_size();
 
