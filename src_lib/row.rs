@@ -1,6 +1,6 @@
 use super::{NibbleTest, Vec};
 
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Row {
     pub note: u8,
     pub instrument: u8,

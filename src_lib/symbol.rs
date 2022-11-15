@@ -28,7 +28,7 @@ impl SymbolPrefixBits for u8 {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Symbol {
     Unknown,
     Dictionary(u8),
@@ -42,7 +42,15 @@ impl Symbol {
         match self {
             Symbol::Dictionary(_) => 1,
             Symbol::Reference(_) => 1,
-            Symbol::RLE(_) => 1,
+            Symbol::RLE(length) => {
+                if *length <= 32 {
+                    1
+                } else if *length <= 1024 {
+                    2
+                } else {
+                    3
+                }
+            }
             Symbol::RowEvent(row) => {
                 let mut num_non_zeros = 1_u8;
 
