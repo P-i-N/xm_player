@@ -10,16 +10,18 @@ mod formats;
 use formats::*;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let mut file_name = PathBuf::from("../../deadlock.xm");
+    let mut file_name = PathBuf::from("../../alf.xm");
     let data = std::fs::read(&file_name)?;
 
     let mut builder = Builder::new();
     convert_xm(&mut builder, &data)?;
 
-    let data = builder.build();
+    let um_data = builder.build();
 
     file_name.set_extension("um");
-    std::fs::write(&file_name, &data)?;
+    std::fs::write(&file_name, &um_data)?;
+
+    let module_desc = xm_player::ModuleDesc::new(&um_data)?;
 
     Ok(())
 }

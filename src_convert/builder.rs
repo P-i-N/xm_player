@@ -26,6 +26,7 @@ pub struct Vibrato {
 
 #[derive(Default)]
 pub struct Sample {
+    pub offset: usize,
     pub data: Vec<u8>,
     pub is_16bit: bool,
     pub loop_start: u32,
@@ -38,6 +39,7 @@ pub struct Sample {
 }
 
 pub struct Instrument {
+    pub offset: usize,
     pub sample_keymap: [usize; 96],
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
@@ -114,13 +116,37 @@ impl Builder {
         let mut result = Vec::new();
         let mut bw = BinaryWriter::new(&mut result);
 
+        bw.write_u8('U' as u8); // Universal
+        bw.write_u8('M' as u8); // Module
+        bw.write_u8('0' as u8); // Major version
+        bw.write_u8('1' as u8); // Minor version
+
         self.channels.clear();
 
         for channel_index in 0..self.num_channels {
-            let channel = self.extract_channel(channel_index);
+            let mut channel = self.extract_channel(channel_index);
+
+            channel.offset = bw.pos();
             channel.write(&mut bw);
 
             self.channels.push(channel);
+        }
+
+        // Write offsets to channels, instruments and samples at the end of data block
+        {
+            let offset = bw.pos() as u32;
+
+            bw.write_u32(self.instruments.len() as u32);
+            for instrument in &self.instruments {
+                bw.write_u32(instrument.offset as u32);
+            }
+
+            bw.write_u32(self.channels.len() as u32);
+            for channel in &self.channels {
+                bw.write_u32(channel.offset as u32);
+            }
+
+            bw.write_u32(offset);
         }
 
         result

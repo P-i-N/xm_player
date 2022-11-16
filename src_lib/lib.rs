@@ -14,6 +14,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::error::Error;
 use core::fmt::Display;
+use std::intrinsics::size_of;
 
 mod fixed;
 
@@ -22,6 +23,8 @@ use utils::ButterworthFilter;
 
 mod symbol;
 pub use symbol::Symbol;
+pub use symbol::SymbolEncodingSize;
+pub use symbol::SymbolPrefixBits;
 
 mod module;
 pub use module::Module;
@@ -151,10 +154,53 @@ impl NibbleTest<u8> for u8 {
 
 #[repr(C, packed)]
 pub struct SampleDesc {
-    //
+    pub data_offset: u32,
+    pub data_length: u32,
+    pub is_16bit: u8,
+    pub loop_start: u32,
+    pub loop_end: u32,
+    pub volume: u8,
+    pub panning: u8,
+    pub relative_note: i8,
+    pub finetune: i8,
 }
 
 #[repr(C, packed)]
 pub struct InstrumentDesc {
-    //
+    pub sample_keymap: [u16; 96],
+}
+
+#[repr(C, packed)]
+pub struct ChannelDesc {
+    pub data_offset: u32,
+}
+
+#[repr(C, packed)]
+pub struct ModuleDesc<'a> {
+    pub data: &'a [u8],
+    pub samples: &'a [SampleDesc],
+    pub instruments: &'a [InstrumentDesc],
+    pub channels: &'a [ChannelDesc],
+}
+
+impl<'a> ModuleDesc<'a> {
+    pub fn new(data: &'a [u8]) -> Result<Self, Box<dyn Error>> {
+        let mut br = BinaryReader::new(data);
+
+        br.pos = data.len() - 4; // Seek back to last 4 bytes containing ending header offset
+        let header_offset = br.read_u32() as usize;
+        br.pos = header_offset;
+
+        let num_instruments = br.read_u32() as usize;
+        let (_, instruments, _) = unsafe {
+            data[0..size_of::<InstrumentDesc>() * num_instruments].align_to::<InstrumentDesc>()
+        };
+
+        Ok(ModuleDesc {
+            data,
+            samples: &[],
+            instruments,
+            channels: &[],
+        })
+    }
 }

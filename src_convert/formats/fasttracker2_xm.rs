@@ -157,6 +157,7 @@ fn parse_instrument(
     br.skip(23);
 
     let mut instr = Instrument {
+        offset: 0,
         sample_keymap: [usize::MAX; 96],
         volume_envelope: Envelope::default(),
         panning_envelope: Envelope::default(),

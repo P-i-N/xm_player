@@ -10,7 +10,7 @@ pub enum SymbolPrefix {
     RowEvent,
 }
 
-trait SymbolPrefixBits {
+pub trait SymbolPrefixBits {
     fn symbol_prefix(&self) -> SymbolPrefix;
 }
 
@@ -28,6 +28,22 @@ impl SymbolPrefixBits for u8 {
     }
 }
 
+pub trait SymbolEncodingSize {
+    fn encoding_size(&self) -> usize;
+}
+
+impl SymbolEncodingSize for [Symbol] {
+    fn encoding_size(&self) -> usize {
+        let mut size = 0;
+
+        for symbol in self {
+            size += symbol.encoding_size();
+        }
+
+        size
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Symbol {
     Unknown,
@@ -38,34 +54,6 @@ pub enum Symbol {
 }
 
 impl Symbol {
-    pub fn get_encoding_size(&self) -> usize {
-        match self {
-            Symbol::Dictionary(_) => 1,
-            Symbol::Reference(_) => 1,
-            Symbol::RLE(length) => {
-                if *length <= 32 {
-                    1
-                } else if *length <= 1024 {
-                    2
-                } else {
-                    3
-                }
-            }
-            Symbol::RowEvent(row) => {
-                let mut num_non_zeros = 1_u8;
-
-                num_non_zeros += sign_u8(row.note);
-                num_non_zeros += sign_u8(row.instrument);
-                num_non_zeros += sign_u8(row.volume);
-                num_non_zeros += sign_u8(row.effect_type);
-                num_non_zeros += sign_u8(row.effect_param);
-
-                num_non_zeros as usize
-            }
-            Symbol::Unknown => 0,
-        }
-    }
-
     pub fn is_row_event_or_dictionary(&self) -> bool {
         match self {
             Symbol::RowEvent(_) | Symbol::Dictionary(_) => true,
@@ -206,6 +194,36 @@ impl Symbol {
             }
 
             Symbol::Unknown => {}
+        }
+    }
+}
+
+impl SymbolEncodingSize for Symbol {
+    fn encoding_size(&self) -> usize {
+        match self {
+            Symbol::Dictionary(_) => 1,
+            Symbol::Reference(_) => 1,
+            Symbol::RLE(length) => {
+                if *length <= 32 {
+                    1
+                } else if *length <= 1024 {
+                    2
+                } else {
+                    3
+                }
+            }
+            Symbol::RowEvent(row) => {
+                let mut num_non_zeros = 1_u8;
+
+                num_non_zeros += sign_u8(row.note);
+                num_non_zeros += sign_u8(row.instrument);
+                num_non_zeros += sign_u8(row.volume);
+                num_non_zeros += sign_u8(row.effect_type);
+                num_non_zeros += sign_u8(row.effect_param);
+
+                num_non_zeros as usize
+            }
+            Symbol::Unknown => 0,
         }
     }
 }

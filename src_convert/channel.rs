@@ -4,11 +4,12 @@ use std::{collections::HashMap, hash::Hash};
 use super::*;
 use xm_player::BinaryWriter;
 use xm_player::Row;
-use xm_player::Symbol;
+use xm_player::{Symbol, SymbolEncodingSize};
 
 #[derive(Default)]
 pub struct Channel {
     pub index: usize,
+    pub offset: usize,
     pub symbols: Vec<Symbol>,
     pub row_dict: Vec<Row>,
     pub slice_dict: Vec<Symbol>,
@@ -68,15 +69,15 @@ impl Channel {
         let mut result = 2 + self.slices.len() * 3;
 
         for row in &self.row_dict {
-            result += Symbol::RowEvent(*row).get_encoding_size();
+            result += Symbol::RowEvent(*row).encoding_size();
         }
 
         for symbol in &self.slice_dict {
-            result += symbol.get_encoding_size();
+            result += symbol.encoding_size();
         }
 
         for row in &self.symbols {
-            result += row.get_encoding_size();
+            result += row.encoding_size();
         }
 
         result
@@ -119,16 +120,6 @@ impl Channel {
         self.search_map = search_map;
     }
 
-    fn slice_encoding_size(slice: &[Symbol]) -> usize {
-        let mut result = 0;
-
-        for symbol in slice {
-            result += symbol.get_encoding_size();
-        }
-
-        result
-    }
-
     pub fn compress_repeated_parts(&mut self) {
         let mut repeated_positions = Vec::new();
         let mut best_repeated_positions = Vec::new();
@@ -149,7 +140,7 @@ impl Channel {
                 let hash = Channel::symbol_slice_hash(&slice_header);
 
                 if let Some(search_positions) = self.search_map.get(&hash) {
-                    for length in 4..20 {
+                    for length in (4..68).rev() {
                         if start + length > self.symbols.len() {
                             break;
                         }
@@ -173,8 +164,8 @@ impl Channel {
                         }
 
                         if count > 1 {
-                            let slice_size =
-                                Channel::slice_encoding_size(&self.symbols[start..start + length]);
+                            let slice_size = self.symbols[start..start + length].encoding_size();
+
                             let saved_bytes = slice_size * (count - 1);
 
                             if saved_bytes > best_total_saved_bytes {

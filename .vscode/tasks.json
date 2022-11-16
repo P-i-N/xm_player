@@ -2,24 +2,28 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "rust: cargo build",
-			"group": "build",
 			"type": "cargo",
 			"command": "build",
-			//"args": [ "--release" ],
 			"problemMatcher": [
 				"$rustc"
 			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"label": "rust: cargo build"
 		},
 		{
-			"label": "rust: cargo build stm32",
-			"group": "build",
 			"type": "cargo",
-			"command": "build",
-			"args": [ "--target=thumbv7em-none-eabihf" ],
+			"command": "test",
 			"problemMatcher": [
 				"$rustc"
 			],
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"label": "rust: cargo test"
 		}
 	]
 }

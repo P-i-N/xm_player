@@ -40,4 +40,12 @@ impl<'a> BinaryWriter<'a> {
     pub fn write_i32(&mut self, value: i32) {
         self.write_u32(unsafe { transmute::<i32, u32>(value) });
     }
+
+    pub fn align_to(&mut self, alignment: usize) {
+        let pos = self.pos();
+        let padding = (alignment - (pos % alignment)) % alignment;
+        for _ in 0..padding {
+            self.write_u8(0);
+        }
+    }
 }
