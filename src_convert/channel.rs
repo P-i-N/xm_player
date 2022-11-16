@@ -132,110 +132,94 @@ impl Channel {
     pub fn compress_repeated_parts(&mut self) {
         let mut repeated_positions = Vec::new();
         let mut best_repeated_positions = Vec::new();
-        let mut large_mode = false;
 
-        loop {
-            while self.slices.len() < 64 && self.symbols.len() >= 8 {
-                self.rebuild_search_map();
+        while self.slices.len() < 64 && self.symbols.len() >= 8 {
+            self.rebuild_search_map();
 
-                let mut best_length = 0;
-                let mut best_count = 0;
-                let mut best_total_saved_bytes = 0;
+            let mut best_length = 0;
+            let mut best_count = 0;
+            let mut best_total_saved_bytes = 0;
 
-                best_repeated_positions.clear();
+            best_repeated_positions.clear();
 
-                for start in 0..self.symbols.len() - 4 {
-                    // Use hash of first 4 symbols as a lookup to search_map to get a vector
-                    // of potential matching positions
-                    let slice_header = &self.symbols[start..start + 4];
-                    let hash = Channel::symbol_slice_hash(&slice_header);
+            for start in 0..self.symbols.len() - 4 {
+                // Use hash of first 4 symbols as a lookup to search_map to get a vector
+                // of potential matching positions
+                let slice_header = &self.symbols[start..start + 4];
+                let hash = Channel::symbol_slice_hash(&slice_header);
 
-                    if let Some(search_positions) = self.search_map.get(&hash) {
-                        let length_range = if large_mode {
-                            4_usize..260
-                        } else {
-                            4_usize..20
-                        };
+                if let Some(search_positions) = self.search_map.get(&hash) {
+                    for length in 4..20 {
+                        if start + length > self.symbols.len() {
+                            break;
+                        }
 
-                        for length in length_range {
-                            if start + length > self.symbols.len() {
-                                break;
+                        let slice_footer = &self.symbols[start + 4..start + length];
+
+                        let mut count = 0;
+                        let mut search_offset = start;
+                        repeated_positions.clear();
+
+                        for &pos in search_positions {
+                            if pos < search_offset || pos + length > self.symbols.len() {
+                                continue;
                             }
 
-                            let slice_footer = &self.symbols[start + 4..start + length];
-
-                            let mut count = 0;
-                            let mut search_offset = start;
-                            repeated_positions.clear();
-
-                            for &pos in search_positions {
-                                if pos < search_offset || pos + length > self.symbols.len() {
-                                    continue;
-                                }
-
-                                if &self.symbols[pos + 4..pos + length] == slice_footer {
-                                    count += 1;
-                                    search_offset = pos + length;
-                                    repeated_positions.push(pos);
-                                }
+                            if &self.symbols[pos + 4..pos + length] == slice_footer {
+                                count += 1;
+                                search_offset = pos + length;
+                                repeated_positions.push(pos);
                             }
+                        }
 
-                            if count > 1 {
-                                let slice_size = Channel::slice_encoding_size(
-                                    &self.symbols[start..start + length],
-                                );
-                                let saved_bytes = slice_size * (count - 1);
+                        if count > 1 {
+                            let slice_size =
+                                Channel::slice_encoding_size(&self.symbols[start..start + length]);
+                            let saved_bytes = slice_size * (count - 1);
 
-                                if saved_bytes > best_total_saved_bytes {
-                                    best_length = length;
-                                    best_count = count;
-                                    best_total_saved_bytes = saved_bytes;
+                            if saved_bytes > best_total_saved_bytes {
+                                best_length = length;
+                                best_count = count;
+                                best_total_saved_bytes = saved_bytes;
 
-                                    best_repeated_positions.clear();
-                                    best_repeated_positions.extend_from_slice(&repeated_positions);
-                                }
+                                best_repeated_positions.clear();
+                                best_repeated_positions.extend_from_slice(&repeated_positions);
                             }
                         }
                     }
                 }
-
-                if best_count > 0 {
-                    self.slices
-                        .push((self.slice_dict.len() as u16, best_length as u16));
-
-                    // Copy repeated slice symbols to slice dictionary
-                    let start = best_repeated_positions[0];
-                    for symbol in &self.symbols[start..start + best_length] {
-                        self.slice_dict.push(*symbol);
-                    }
-
-                    let mut new_symbols = Vec::<Symbol>::new();
-                    let mut prev_pos = 0;
-
-                    // Erase all repeated occurences except for the first one. Replace erased
-                    // parts with back-reference to the first part.
-                    for &pos in &best_repeated_positions {
-                        new_symbols.extend_from_slice(&self.symbols[prev_pos..pos]);
-
-                        // Insert reference instead of subslice
-                        new_symbols.push(Symbol::Reference((self.slices.len() - 1) as u8));
-
-                        prev_pos = pos + best_length;
-                    }
-
-                    // Append rest of the symbols
-                    new_symbols.extend_from_slice(&self.symbols[prev_pos..]);
-                    self.symbols = new_symbols;
-                } else {
-                    break;
-                }
             }
 
-            if large_mode {
+            if best_count > 0 {
+                self.slices
+                    .push((self.slice_dict.len() as u16, best_length as u16));
+
+                // Copy repeated slice symbols to slice dictionary
+                let start = best_repeated_positions[0];
+                for symbol in &self.symbols[start..start + best_length] {
+                    self.slice_dict.push(*symbol);
+                }
+
+                let mut new_symbols = Vec::<Symbol>::new();
+                let mut prev_pos = 0;
+
+                // Erase all repeated occurences except for the first one. Replace erased
+                // parts with back-reference to the first part.
+                for &pos in &best_repeated_positions {
+                    new_symbols.extend_from_slice(&self.symbols[prev_pos..pos]);
+
+                    // Insert reference instead of subslice
+                    new_symbols.push(Symbol::Reference((self.slices.len() - 1) as u8));
+
+                    prev_pos = pos + best_length;
+                }
+
+                // Append rest of the symbols
+                new_symbols.extend_from_slice(&self.symbols[prev_pos..]);
+                self.symbols = new_symbols;
+            } else {
                 break;
             }
-
-            large_mode = true;
         }
 
         println!(

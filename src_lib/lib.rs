@@ -58,10 +58,6 @@ mod platform;
 pub use platform::DummyInterface;
 pub use platform::PlatformInterface;
 
-mod packed_module;
-pub use packed_module::PackedModule;
-pub use packed_module::PackingParams;
-
 ///////////////////////////////////////////////////////////////////////////////
 
 mod math {

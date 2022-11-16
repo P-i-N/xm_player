@@ -8,8 +8,6 @@ mod win32;
 use win32::Win32 as Platform;
 
 use xm_player::Module;
-use xm_player::PackedModule;
-use xm_player::PackingParams;
 use xm_player::PlatformInterface;
 use xm_player::Player;
 
@@ -115,20 +113,6 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());
 
     let module = Module::from_memory(embedded_data)?;
-
-    /*
-    let mut packed_data = Vec::<u8>::new();
-
-    let packing_params = PackingParams {
-        convert_to_8bits: true,
-        downsample_threshold: 1,
-    };
-
-    let _packed_module = PackedModule::from_module(&module, packing_params, &mut packed_data);
-    std::fs::write("../../song.pxm", packed_data)?;
-    */
-
-    //return Ok(());
 
     let mut player = Player::new(&module, platform.as_ref(), SAMPLE_RATE, 1);
 
