@@ -1,11 +1,15 @@
 use super::*;
+use xm_player::EnvelopeDesc;
 
 #[derive(Clone, Default)]
-pub struct Envelope {
-
+pub struct BEnvelope {
+    pub index: usize,
+    pub points: Vec<(u32, u32)>,
+    pub tick_values: Vec<u16>,
+    pub desc: EnvelopeDesc,
 }
 
-impl Envelope {
+impl BEnvelope {
     pub fn build(&mut self, points: &[usize], enable_sustain: bool, enable_loop: bool) {
         self.tick_values.clear();
 
@@ -23,7 +27,7 @@ impl Envelope {
 
             for ti in 0..num_ticks {
                 let value = prev_value + ((to_value - prev_value) * ti) / num_ticks;
-                self.tick_values.push(value as u8);
+                self.tick_values.push(value as u16);
             }
 
             prev_tick = to_tick;
@@ -31,36 +35,36 @@ impl Envelope {
         }
 
         // Ensure last envelope point value is stored as well
-        self.tick_values.push(prev_value as u8);
+        self.tick_values.push(prev_value as u16);
 
         // Convert sustain to tick time
-        if (self.sustain as usize) < (points.len() / 2) {
-            self.sustain = points[(self.sustain * 2) as usize] as usize;
+        if (self.desc.sustain as usize) < (points.len() / 2) {
+            self.desc.sustain = points[(self.desc.sustain * 2) as usize] as u16;
         } else {
-            self.sustain = usize::MAX;
+            self.desc.sustain = u16::MAX;
         }
 
         // Convert loop_start to tick time
-        if (self.loop_start as usize) < (points.len() / 2) {
-            self.loop_start = points[(self.loop_start * 2) as usize] as usize;
+        if (self.desc.loop_start as usize) < (points.len() / 2) {
+            self.desc.loop_start = points[(self.desc.loop_start * 2) as usize] as u16;
         } else {
-            self.loop_start = usize::MAX;
+            self.desc.loop_start = u16::MAX;
         }
 
         // Convert loop_end to tick time
-        if (self.loop_end as usize) < (points.len() / 2) {
-            self.loop_end = points[(self.loop_end * 2) as usize] as usize;
+        if (self.desc.loop_end as usize) < (points.len() / 2) {
+            self.desc.loop_end = points[(self.desc.loop_end * 2) as usize] as u16;
         } else {
-            self.loop_end = usize::MAX;
+            self.desc.loop_end = u16::MAX;
         }
 
         if !enable_sustain {
-            self.sustain = usize::MAX;
+            self.desc.sustain = u16::MAX;
         }
 
         if !enable_loop {
-            self.loop_start = usize::MAX;
-            self.loop_end = usize::MAX;
+            self.desc.loop_start = u16::MAX;
+            self.desc.loop_end = u16::MAX;
         }
     }
 }

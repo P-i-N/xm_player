@@ -48,4 +48,28 @@ impl<'a> BinaryWriter<'a> {
             self.write_u8(0);
         }
     }
+
+    pub fn write_aligned_struct<T>(&mut self, value: &T) {
+        self.align_to(core::mem::align_of::<T>());
+        self.write_struct(value);
+    }
+
+    pub fn write_struct<T>(&mut self, value: &T) {
+        let size = core::mem::size_of::<T>();
+        let ptr = value as *const T;
+        let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, size) };
+        self.output.extend_from_slice(bytes);
+    }
+
+    pub fn write_aligned_slice<T>(&mut self, slice: &[T]) {
+        self.align_to(core::mem::align_of::<T>());
+        self.write_slice(slice);
+    }
+
+    pub fn write_slice<T>(&mut self, slice: &[T]) {
+        let size = core::mem::size_of::<T>();
+        let ptr = slice.as_ptr();
+        let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, size * slice.len()) };
+        self.output.extend_from_slice(bytes);
+    }
 }

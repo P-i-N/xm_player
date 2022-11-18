@@ -1,7 +1,10 @@
 use std::{error, path::PathBuf};
 
-mod channel;
-use channel::*;
+mod event_stream;
+pub use event_stream::*;
+
+mod benvelope;
+pub use benvelope::*;
 
 mod builder;
 use builder::*;

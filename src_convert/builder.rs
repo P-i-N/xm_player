@@ -1,16 +1,9 @@
-use super::Channel;
+use super::*;
 use xm_player::*;
 
 pub struct Pattern {
     pub num_rows: usize,
     pub channel_rows: Vec<Vec<Row>>,
-}
-
-#[derive(Default)]
-pub struct Envelope {
-    pub index: usize,
-    pub points: Vec<(u32, u32)>,
-    pub desc: EnvelopeDesc,
 }
 
 #[derive(Default)]
@@ -31,26 +24,6 @@ pub struct Sample {
 pub struct Instrument {
     pub index: usize,
     pub desc: InstrumentDesc,
-    pub volume_envelope: Envelope,
-    pub panning_envelope: Envelope,
-    pub vibrato: Vibrato,
-    pub fadeout: u32,
-    pub samples: Vec<Sample>,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct Range<T> {
-    pub min: T,
-    pub max: T,
-    pub default: T,
-}
-
-impl<T: Copy> Range<T> {
-    pub fn set_all(&mut self, value: T) {
-        self.min = value;
-        self.max = value;
-        self.default = value;
-    }
 }
 
 // Universal Module Builder
@@ -73,11 +46,17 @@ pub struct Builder {
     // Initial song BPM
     pub bpm: Range<usize>,
 
+    // Envelopes (referenced by instruments)
+    pub envelopes: Vec<BEnvelope>,
+
+    // Samples (referenced by instruments)
+    pub samples: Vec<Sample>,
+
     // Instruments
     pub instruments: Vec<Instrument>,
 
     // Rows of note events for individual channels
-    channels: Vec<Channel>,
+    channels: Vec<EventStream>,
 }
 
 impl Builder {
@@ -87,16 +66,10 @@ impl Builder {
             patterns: Vec::new(),
             pattern_order: Vec::new(),
             restart_position: 0,
-            tempo: Range {
-                min: 6,
-                max: 6,
-                default: 6,
-            },
-            bpm: Range {
-                min: 120,
-                max: 120,
-                default: 120,
-            },
+            tempo: Range::new(6),
+            bpm: Range::new(120),
+            envelopes: Vec::new(),
+            samples: Vec::new(),
             instruments: Vec::new(),
             channels: Vec::new(),
         }
@@ -116,24 +89,27 @@ impl Builder {
         for channel_index in 0..self.num_channels {
             let mut channel = self.extract_channel(channel_index);
 
-            channel.offset = bw.pos();
+            channel.desc.data_offset = bw.pos() as u32;
             channel.write(&mut bw);
 
             self.channels.push(channel);
+        }
+
+        // Write samples
+        {
+            bw.write_u32(self.samples.len() as u32);
         }
 
         // Write offsets to channels, instruments and samples at the end of data block
         {
             let offset = bw.pos() as u32;
 
-            bw.write_u32(self.instruments.len() as u32);
-            for instrument in &self.instruments {
-                bw.write_u32(instrument.offset as u32);
-            }
+            //bw.write_u32(self.instruments.len() as u32);
+            //bw.write_aligned_slice(&self.instruments);
 
             bw.write_u32(self.channels.len() as u32);
             for channel in &self.channels {
-                bw.write_u32(channel.offset as u32);
+                bw.write_u32(channel.desc.data_offset as u32);
             }
 
             bw.write_u32(offset);
@@ -143,8 +119,8 @@ impl Builder {
     }
 
     // Separate individual pattern rows into individual channel row streams
-    fn extract_channel(&self, channel_index: usize) -> Channel {
-        let mut channel = Channel::default();
+    fn extract_channel(&self, channel_index: usize) -> EventStream {
+        let mut channel = EventStream::default();
         channel.index = channel_index;
 
         for poi in 0..self.pattern_order.len() {

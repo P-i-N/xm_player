@@ -4,12 +4,12 @@ use std::{collections::HashMap, hash::Hash};
 use super::*;
 use xm_player::BinaryWriter;
 use xm_player::Row;
-use xm_player::{Symbol, SymbolEncodingSize};
+use xm_player::{ChannelDesc, Symbol, SymbolEncodingSize};
 
 #[derive(Default)]
-pub struct Channel {
+pub struct EventStream {
     pub index: usize,
-    pub offset: usize,
+    pub desc: ChannelDesc,
     pub symbols: Vec<Symbol>,
     pub row_dict: Vec<Row>,
     pub slice_dict: Vec<Symbol>,
@@ -17,7 +17,7 @@ pub struct Channel {
     pub search_map: HashMap<u64, Vec<usize>>,
 }
 
-impl Channel {
+impl EventStream {
     fn replace_rle_range(&mut self, begin: usize, num_repeats: usize) -> usize {
         let rle_symbols = 1;
         self.symbols.drain(begin + 1..begin + num_repeats);
@@ -108,7 +108,7 @@ impl Channel {
         let mut search_map = HashMap::<u64, Vec<usize>>::new();
 
         for pos in 0..self.symbols.len() - 4 {
-            let hash = Channel::symbol_slice_hash(&self.symbols[pos..pos + 4]);
+            let hash = EventStream::symbol_slice_hash(&self.symbols[pos..pos + 4]);
 
             if let Some(v) = search_map.get_mut(&hash) {
                 v.push(pos);
@@ -137,7 +137,7 @@ impl Channel {
                 // Use hash of first 4 symbols as a lookup to search_map to get a vector
                 // of potential matching positions
                 let slice_header = &self.symbols[start..start + 4];
-                let hash = Channel::symbol_slice_hash(&slice_header);
+                let hash = EventStream::symbol_slice_hash(&slice_header);
 
                 if let Some(search_positions) = self.search_map.get(&hash) {
                     for length in (4..68).rev() {
@@ -362,9 +362,9 @@ impl Channel {
 pub mod tests {
     use xm_player::Symbol;
 
-    use super::Channel;
+    use super::EventStream;
 
-    fn notes_from_string(channel: &mut Channel, notes: &str) {
+    fn notes_from_string(channel: &mut EventStream, notes: &str) {
         for ch in notes.chars() {
             //
         }

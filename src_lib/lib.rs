@@ -179,9 +179,9 @@ pub struct SampleDesc {
 pub struct EnvelopeDesc {
     pub data_offset: u32,
     pub data_length: u32,
-    pub sustain: u8,
-    pub loop_start: u8,
-    pub loop_end: u8,
+    pub sustain: u16,
+    pub loop_start: u16,
+    pub loop_end: u16,
     pub fadeout: u16,
 }
 
@@ -202,11 +202,45 @@ pub struct InstrumentDesc {
     pub vibrato: VibratoDesc,
 }
 
+impl Default for InstrumentDesc {
+    fn default() -> Self {
+        InstrumentDesc {
+            sample_keymap: [0; 96],
+            volume_envelope_index: u8::MAX,
+            panning_envelope_index: u8::MAX,
+            vibrato: VibratoDesc::default(),
+        }
+    }
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ChannelDesc {
     pub data_offset: u32,
     pub data_length: u32,
+}
+
+#[repr(C, packed)]
+pub struct Range<T> {
+    pub min: T,
+    pub max: T,
+    pub default: T,
+}
+
+impl<T: Copy> Range<T> {
+    pub fn new(value: T) -> Self {
+        Self {
+            min: value,
+            max: value,
+            default: value,
+        }
+    }
+
+    pub fn set_all(&mut self, value: T) {
+        self.min = value;
+        self.max = value;
+        self.default = value;
+    }
 }
 
 #[repr(C, packed)]
@@ -216,8 +250,8 @@ pub struct ModuleDesc<'a> {
     pub envelopes: &'a [EnvelopeDesc],
     pub instruments: &'a [InstrumentDesc],
     pub channels: &'a [ChannelDesc],
-    pub tempo: u8,
-    pub bpm: u16,
+    pub tempo: Range<u8>,
+    pub bpm: Range<u16>,
 }
 
 impl<'a> ModuleDesc<'a> {
@@ -239,8 +273,8 @@ impl<'a> ModuleDesc<'a> {
             envelopes: &[],
             instruments,
             channels: &[],
-            tempo: 6,
-            bpm: 120,
+            tempo: Range::new(6),
+            bpm: Range::new(120),
         })
     }
 }

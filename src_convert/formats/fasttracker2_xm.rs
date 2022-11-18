@@ -1,13 +1,9 @@
 use std::error;
 use std::mem::transmute;
 
-use xm_player::BinaryReader;
-use xm_player::FormatError;
-use xm_player::Row;
-use xm_player::SampleDesc;
-use xm_player::SampleFlags;
-
 use super::*;
+use benvelope::BEnvelope;
+use xm_player::*;
 
 #[derive(Default)]
 struct ItemCounts {
@@ -82,7 +78,7 @@ fn parse_pattern(build: &mut Builder, br: &mut BinaryReader) -> Result<(), Box<d
     // Skip pattern header length (4B) + packing type (1B)
     br.skip(5);
 
-    let mut pattern = Pattern {
+    let mut pattern = builder::Pattern {
         num_rows: br.read_u16() as usize,
         channel_rows: Vec::new(),
     };
@@ -158,14 +154,9 @@ fn parse_instrument(
     // Skip instrument name (22B) + type (1B)
     br.skip(23);
 
-    let mut instr = Instrument {
-        offset: 0,
-        sample_keymap: [usize::MAX; 96],
-        volume_envelope: Envelope::default(),
-        panning_envelope: Envelope::default(),
-        vibrato: Vibrato::default(),
-        fadeout: 0,
-        samples: Vec::new(),
+    let mut instr = builder::Instrument {
+        index: build.instruments.len(),
+        desc: InstrumentDesc::default(),
     };
 
     let num_samples = br.read_u16() as usize;
@@ -173,12 +164,12 @@ fn parse_instrument(
         // Skip sample header size (4B)
         br.skip(4);
 
-        for i in &mut instr.sample_keymap {
+        for i in &mut instr.desc.sample_keymap {
             let sample_index = br.read_u8() as usize;
             *i = if sample_index < num_samples {
-                sample_index
+                (build.samples.len() + sample_index) as u8
             } else {
-                usize::MAX
+                u8::MAX
             };
         }
 
@@ -198,37 +189,45 @@ fn parse_instrument(
         let num_volume_points = br.read_u8() as usize;
         let num_panning_points = br.read_u8() as usize;
 
+        let mut volume_envelope = BEnvelope::default();
+        let mut panning_envelope = BEnvelope::default();
+
         for i in (0..num_volume_points * 2).step_by(2) {
-            instr
-                .volume_envelope
+            volume_envelope
                 .points
                 .push((volume_env_points[i] as u32, volume_env_points[i + 1] as u32));
         }
 
         for i in (0..num_panning_points * 2).step_by(2) {
-            instr.panning_envelope.points.push((
+            panning_envelope.points.push((
                 panning_env_points[i] as u32,
                 panning_env_points[i + 1] as u32,
             ));
         }
 
-        instr.volume_envelope.sustain = br.read_u8() as usize;
-        instr.volume_envelope.loop_start = br.read_u8() as usize;
-        instr.volume_envelope.loop_end = br.read_u8() as usize;
+        volume_envelope.desc.sustain = br.read_u8() as u16;
+        volume_envelope.desc.loop_start = br.read_u8() as u16;
+        volume_envelope.desc.loop_end = br.read_u8() as u16;
 
-        instr.panning_envelope.sustain = br.read_u8() as usize;
-        instr.panning_envelope.loop_start = br.read_u8() as usize;
-        instr.panning_envelope.loop_end = br.read_u8() as usize;
+        panning_envelope.desc.sustain = br.read_u8() as u16;
+        panning_envelope.desc.loop_start = br.read_u8() as u16;
+        panning_envelope.desc.loop_end = br.read_u8() as u16;
 
-        let volume_flags = br.read_u8();
-        let panning_flags = br.read_u8();
+        let _volume_flags = br.read_u8();
+        let _panning_flags = br.read_u8();
 
-        instr.vibrato.func = br.read_u8() as u32;
-        instr.vibrato.sweep = br.read_u8() as u32;
-        instr.vibrato.depth = br.read_u8() as u32;
-        instr.vibrato.rate = br.read_u8() as u32;
+        instr.desc.vibrato.waveform = br.read_u8();
+        instr.desc.vibrato.sweep = br.read_u8();
+        instr.desc.vibrato.depth = br.read_u8();
+        instr.desc.vibrato.rate = br.read_u8();
 
-        instr.fadeout = br.read_u16() as u32;
+        volume_envelope.desc.fadeout = br.read_u16();
+
+        instr.desc.volume_envelope_index = build.envelopes.len() as u8;
+        build.envelopes.push(volume_envelope);
+
+        instr.desc.panning_envelope_index = build.envelopes.len() as u8;
+        build.envelopes.push(panning_envelope);
 
         // Reserved, unused
         br.skip(22);
@@ -241,7 +240,7 @@ fn parse_instrument(
             // Seek binary reader to start of sample header
             br.pos = first_sample_header_pos + i * 40;
 
-            parse_sample(&mut instr, sample_data_pos, build, br)?;
+            parse_sample(sample_data_pos, build, br)?;
 
             // Current binary reader position is start of next sample data position
             sample_data_pos = br.pos;
@@ -255,7 +254,6 @@ fn parse_instrument(
 }
 
 fn parse_sample(
-    instr: &mut Instrument,
     data_pos: usize,
     build: &mut Builder,
     br: &mut BinaryReader,
@@ -314,7 +312,7 @@ fn parse_sample(
         br,
     )?;
 
-    instr.samples.push(sample);
+    build.samples.push(sample);
     Ok(())
 }
 
