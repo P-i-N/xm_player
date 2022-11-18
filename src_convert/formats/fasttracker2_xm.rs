@@ -4,6 +4,8 @@ use std::mem::transmute;
 use xm_player::BinaryReader;
 use xm_player::FormatError;
 use xm_player::Row;
+use xm_player::SampleDesc;
+use xm_player::SampleFlags;
 
 use super::*;
 
@@ -259,41 +261,42 @@ fn parse_sample(
     br: &mut BinaryReader,
 ) -> Result<(), Box<dyn error::Error>> {
     let mut sample = Sample::default();
+    let mut desc = sample.desc;
 
     let mut num_samples = br.read_u32() as usize;
 
-    sample.loop_start = br.read_u32();
-    sample.loop_end = sample.loop_start + br.read_u32();
-    sample.volume = br.read_u8();
-    sample.finetune = br.read_i8() as i32;
+    desc.loop_start = br.read_u32();
+    desc.loop_end = desc.loop_start + br.read_u32();
+    desc.volume = br.read_u8();
+    desc.finetune = br.read_i8();
 
     let flags = br.read_u8();
 
-    sample.is_16bit = (flags & 0b10000) != 0;
-    if sample.is_16bit {
+    if (flags & 0b_0001_0000) != 0 {
+        desc.flags |= SampleFlags::IS_16_BITS;
+        desc.loop_start >>= 1;
+        desc.loop_end >>= 1;
         num_samples >>= 1;
-        sample.loop_start >>= 1;
-        sample.loop_end >>= 1;
     }
 
     match flags & 0x3 {
         0 => {
-            sample.loop_start = u32::MAX;
-            sample.loop_end = u32::MAX;
+            desc.loop_start = u32::MAX;
+            desc.loop_end = u32::MAX;
         }
         1 => {
             //
         }
         2 => {
-            sample.loop_pingpong = true;
+            desc.flags |= SampleFlags::PING_PONG;
         }
         _ => {
             return Err(Box::new(FormatError::new("Invalid sample loop type")));
         }
     }
 
-    sample.panning = br.read_u8();
-    sample.relative_note = br.read_i8();
+    desc.panning = br.read_u8();
+    desc.relative_note = br.read_i8();
 
     let compression_type = br.read_u8();
 
@@ -303,7 +306,13 @@ fn parse_sample(
     // Jump to sample data position
     br.pos = data_pos;
 
-    read_sample_data(&mut sample, num_samples, compression_type == 0xAD, br)?;
+    read_sample_data(
+        &mut sample,
+        &mut desc,
+        num_samples,
+        compression_type == 0xAD,
+        br,
+    )?;
 
     instr.samples.push(sample);
     Ok(())
@@ -333,12 +342,13 @@ fn i8_to_u8(value: i8) -> u8 {
 
 fn read_sample_data(
     sample: &mut Sample,
+    desc: &mut SampleDesc,
     num_samples: usize,
     adpcm: bool,
     br: &mut BinaryReader,
 ) -> Result<(), Box<dyn error::Error>> {
     if !adpcm {
-        if sample.is_16bit {
+        if (desc.flags & SampleFlags::IS_16_BITS) != 0 {
             let mut acc: i16 = 0;
             for i in 0..num_samples {
                 (acc, _) = acc.overflowing_add(br.read_i16());

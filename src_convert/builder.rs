@@ -1,7 +1,5 @@
 use super::Channel;
-use xm_player::BinaryWriter;
-use xm_player::Row;
-use xm_player::Symbol;
+use xm_player::*;
 
 pub struct Pattern {
     pub num_rows: usize,
@@ -10,10 +8,9 @@ pub struct Pattern {
 
 #[derive(Default)]
 pub struct Envelope {
+    pub index: usize,
     pub points: Vec<(u32, u32)>,
-    pub sustain: usize,
-    pub loop_start: usize,
-    pub loop_end: usize,
+    pub desc: EnvelopeDesc,
 }
 
 #[derive(Default)]
@@ -26,21 +23,14 @@ pub struct Vibrato {
 
 #[derive(Default)]
 pub struct Sample {
-    pub offset: usize,
+    pub index: usize,
     pub data: Vec<u8>,
-    pub is_16bit: bool,
-    pub loop_start: u32,
-    pub loop_end: u32,
-    pub loop_pingpong: bool,
-    pub volume: u8,
-    pub panning: u8,
-    pub relative_note: i8,
-    pub finetune: i32,
+    pub desc: SampleDesc,
 }
 
 pub struct Instrument {
-    pub offset: usize,
-    pub sample_keymap: [usize; 96],
+    pub index: usize,
+    pub desc: InstrumentDesc,
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
     pub vibrato: Vibrato,

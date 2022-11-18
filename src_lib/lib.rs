@@ -152,11 +152,20 @@ impl NibbleTest<u8> for u8 {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+pub struct SampleFlags;
+
+impl SampleFlags {
+    pub const NONE: u32 = 0;
+    pub const IS_16_BITS: u32 = 0b_0000_0001;
+    pub const PING_PONG: u32 = 0b_0000_0010;
+}
+
 #[repr(C, packed)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SampleDesc {
     pub data_offset: u32,
     pub data_length: u32,
-    pub is_16bit: u8,
+    pub flags: u32,
     pub loop_start: u32,
     pub loop_end: u32,
     pub volume: u8,
@@ -166,21 +175,49 @@ pub struct SampleDesc {
 }
 
 #[repr(C, packed)]
-pub struct InstrumentDesc {
-    pub sample_keymap: [u16; 96],
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EnvelopeDesc {
+    pub data_offset: u32,
+    pub data_length: u32,
+    pub sustain: u8,
+    pub loop_start: u8,
+    pub loop_end: u8,
+    pub fadeout: u16,
 }
 
 #[repr(C, packed)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VibratoDesc {
+    pub waveform: u8,
+    pub sweep: u8,
+    pub depth: u8,
+    pub rate: u8,
+}
+
+#[repr(C, packed)]
+pub struct InstrumentDesc {
+    pub sample_keymap: [u8; 96],
+    pub volume_envelope_index: u8,
+    pub panning_envelope_index: u8,
+    pub vibrato: VibratoDesc,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ChannelDesc {
     pub data_offset: u32,
+    pub data_length: u32,
 }
 
 #[repr(C, packed)]
 pub struct ModuleDesc<'a> {
     pub data: &'a [u8],
     pub samples: &'a [SampleDesc],
+    pub envelopes: &'a [EnvelopeDesc],
     pub instruments: &'a [InstrumentDesc],
     pub channels: &'a [ChannelDesc],
+    pub tempo: u8,
+    pub bpm: u16,
 }
 
 impl<'a> ModuleDesc<'a> {
@@ -199,8 +236,11 @@ impl<'a> ModuleDesc<'a> {
         Ok(ModuleDesc {
             data,
             samples: &[],
+            envelopes: &[],
             instruments,
             channels: &[],
+            tempo: 6,
+            bpm: 120,
         })
     }
 }
