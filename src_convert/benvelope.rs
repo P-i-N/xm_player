@@ -1,16 +1,16 @@
 use super::*;
+use xm_player::BinaryWriter;
 use xm_player::EnvelopeDesc;
 
 #[derive(Clone, Default)]
 pub struct BEnvelope {
     pub index: usize,
-    pub points: Vec<(u32, u32)>,
     pub tick_values: Vec<u16>,
     pub desc: EnvelopeDesc,
 }
 
 impl BEnvelope {
-    pub fn build(&mut self, points: &[usize], enable_sustain: bool, enable_loop: bool) {
+    pub fn build(&mut self, points: &[u16], enable_sustain: bool, enable_loop: bool) {
         self.tick_values.clear();
 
         if points.len() < 4 || (points.len() % 2) != 0 {

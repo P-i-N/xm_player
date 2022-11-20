@@ -13,7 +13,7 @@ mod formats;
 use formats::*;
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let mut file_name = PathBuf::from("../../alf.xm");
+    let mut file_name = PathBuf::from("../../unreal.xm");
     let data = std::fs::read(&file_name)?;
 
     let mut builder = Builder::new();

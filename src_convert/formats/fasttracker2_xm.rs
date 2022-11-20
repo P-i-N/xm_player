@@ -62,8 +62,8 @@ fn parse_header(
     br.pos += 2;
 
     // Tempo and BPM
-    build.tempo.set_all(br.read_u16() as usize);
-    build.bpm.set_all(br.read_u16() as usize);
+    build.tempo.set_all(br.read_u16() as u8);
+    build.bpm.set_all(br.read_u16() as u16);
 
     // Read pattern order
     for _ in 0..song_length {
@@ -173,17 +173,17 @@ fn parse_instrument(
             };
         }
 
-        let mut volume_env_points = [0 as usize; 24];
-        let mut panning_env_points = [0 as usize; 24];
+        let mut volume_env_points = [0 as u16; 24];
+        let mut panning_env_points = [0 as u16; 24];
 
         // Volume envelope points
         for i in 0..24 {
-            volume_env_points[i] = br.read_u16() as usize;
+            volume_env_points[i] = br.read_u16();
         }
 
         // Panning envelope points
         for i in 0..24 {
-            panning_env_points[i] = br.read_u16() as usize;
+            panning_env_points[i] = br.read_u16();
         }
 
         let num_volume_points = br.read_u8() as usize;
@@ -191,19 +191,6 @@ fn parse_instrument(
 
         let mut volume_envelope = BEnvelope::default();
         let mut panning_envelope = BEnvelope::default();
-
-        for i in (0..num_volume_points * 2).step_by(2) {
-            volume_envelope
-                .points
-                .push((volume_env_points[i] as u32, volume_env_points[i + 1] as u32));
-        }
-
-        for i in (0..num_panning_points * 2).step_by(2) {
-            panning_envelope.points.push((
-                panning_env_points[i] as u32,
-                panning_env_points[i + 1] as u32,
-            ));
-        }
 
         volume_envelope.desc.sustain = br.read_u8() as u16;
         volume_envelope.desc.loop_start = br.read_u8() as u16;
@@ -213,8 +200,8 @@ fn parse_instrument(
         panning_envelope.desc.loop_start = br.read_u8() as u16;
         panning_envelope.desc.loop_end = br.read_u8() as u16;
 
-        let _volume_flags = br.read_u8();
-        let _panning_flags = br.read_u8();
+        let volume_flags = br.read_u8();
+        let panning_flags = br.read_u8();
 
         instr.desc.vibrato.waveform = br.read_u8();
         instr.desc.vibrato.sweep = br.read_u8();
@@ -224,9 +211,19 @@ fn parse_instrument(
         volume_envelope.desc.fadeout = br.read_u16();
 
         instr.desc.volume_envelope_index = build.envelopes.len() as u8;
+        volume_envelope.build(
+            &volume_env_points[0..num_volume_points * 2],
+            (volume_flags & 2) != 0,
+            (volume_flags & 4) != 0,
+        );
         build.envelopes.push(volume_envelope);
 
         instr.desc.panning_envelope_index = build.envelopes.len() as u8;
+        panning_envelope.build(
+            &panning_env_points[0..num_panning_points * 2],
+            (panning_flags & 2) != 0,
+            (panning_flags & 4) != 0,
+        );
         build.envelopes.push(panning_envelope);
 
         // Reserved, unused

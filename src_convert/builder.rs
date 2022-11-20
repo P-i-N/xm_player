@@ -41,16 +41,16 @@ pub struct Builder {
     pub restart_position: usize,
 
     // Initial song tempo
-    pub tempo: Range<usize>,
+    pub tempo: Range<u8>,
 
     // Initial song BPM
-    pub bpm: Range<usize>,
-
-    // Envelopes (referenced by instruments)
-    pub envelopes: Vec<BEnvelope>,
+    pub bpm: Range<u16>,
 
     // Samples (referenced by instruments)
     pub samples: Vec<Sample>,
+
+    // Envelopes (referenced by instruments)
+    pub envelopes: Vec<BEnvelope>,
 
     // Instruments
     pub instruments: Vec<Instrument>,
@@ -68,8 +68,8 @@ impl Builder {
             restart_position: 0,
             tempo: Range::new(6),
             bpm: Range::new(120),
-            envelopes: Vec::new(),
             samples: Vec::new(),
+            envelopes: Vec::new(),
             instruments: Vec::new(),
             channels: Vec::new(),
         }
@@ -84,35 +84,81 @@ impl Builder {
         bw.write_u8('0' as u8); // Major version
         bw.write_u8('1' as u8); // Minor version
 
-        self.channels.clear();
-
-        for channel_index in 0..self.num_channels {
-            let mut channel = self.extract_channel(channel_index);
-
-            channel.desc.data_offset = bw.pos() as u32;
-            channel.write(&mut bw);
-
-            self.channels.push(channel);
-        }
-
         // Write samples
         {
-            bw.write_u32(self.samples.len() as u32);
+            for sample in &mut self.samples {
+                sample.desc.data_offset = bw.pos() as u32;
+                sample.desc.data_length = sample.data.len() as u32;
+                bw.write_slice(&sample.data);
+            }
+        }
+
+        // Write envelopes
+        {
+            for envelope in &mut self.envelopes {
+                envelope.desc.data_offset = bw.pos() as u32;
+                envelope.desc.data_length = (envelope.tick_values.len() * 2) as u32;
+                bw.write_slice(&envelope.tick_values);
+            }
+        }
+
+        // Build channel event streams
+        {
+            self.channels.clear();
+            for channel_index in 0..self.num_channels {
+                let channel = self.extract_channel(channel_index);
+                self.channels.push(channel);
+            }
+        }
+
+        // Write channel event streams
+        {
+            for channel in &mut self.channels {
+                channel.desc.data_offset = bw.pos() as u32;
+                channel.desc.data_length = channel.write(&mut bw) as u32;
+            }
         }
 
         // Write offsets to channels, instruments and samples at the end of data block
         {
-            let offset = bw.pos() as u32;
+            let first_sample_offset = bw.pos() as u32;
 
-            //bw.write_u32(self.instruments.len() as u32);
-            //bw.write_aligned_slice(&self.instruments);
-
-            bw.write_u32(self.channels.len() as u32);
-            for channel in &self.channels {
-                bw.write_u32(channel.desc.data_offset as u32);
+            bw.write_u8(self.samples.len() as u8);
+            for sample in &self.samples {
+                bw.write_aligned_struct(&sample.desc);
             }
 
-            bw.write_u32(offset);
+            let first_envelope_offset = bw.pos() as u32;
+
+            bw.write_u8(self.envelopes.len() as u8);
+            for envelope in &self.envelopes {
+                bw.write_aligned_struct(&envelope.desc);
+            }
+
+            let first_instrument_offset = bw.pos() as u32;
+
+            bw.write_u8(self.instruments.len() as u8);
+            for instrument in &self.instruments {
+                bw.write_aligned_struct(&instrument.desc);
+            }
+
+            let first_channel_offset = bw.pos() as u32;
+
+            bw.write_u8(self.channels.len() as u8);
+            for channel in &self.channels {
+                bw.write_aligned_struct(&channel.desc);
+            }
+
+            let module_desc_offset = bw.pos() as u32;
+
+            self.tempo.write(&mut bw);
+            self.bpm.write(&mut bw);
+
+            bw.write_u32(first_sample_offset);
+            bw.write_u32(first_envelope_offset);
+            bw.write_u32(first_instrument_offset);
+            bw.write_u32(first_channel_offset);
+            bw.write_u32(module_desc_offset);
         }
 
         result

@@ -269,7 +269,9 @@ impl EventStream {
         );
     }
 
-    pub fn write(&self, bw: &mut BinaryWriter) {
+    pub fn write(&self, bw: &mut BinaryWriter) -> usize {
+        let start_pos = bw.pos();
+
         // Event dictionary
         {
             bw.write_u8(self.row_dict.len() as u8);
@@ -297,6 +299,8 @@ impl EventStream {
         for symbol in &self.symbols {
             symbol.write(bw);
         }
+
+        bw.pos() - start_pos
     }
 
     pub fn unpack_symbols(&self) -> Vec<Symbol> {

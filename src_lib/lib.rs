@@ -243,6 +243,38 @@ impl<T: Copy> Range<T> {
     }
 }
 
+impl Range<u8> {
+    pub fn write(&self, writer: &mut BinaryWriter) {
+        writer.write_u8(self.min);
+        writer.write_u8(self.max);
+        writer.write_u8(self.default);
+    }
+
+    pub fn read(reader: &mut BinaryReader) -> Self {
+        Self {
+            min: reader.read_u8(),
+            max: reader.read_u8(),
+            default: reader.read_u8(),
+        }
+    }
+}
+
+impl Range<u16> {
+    pub fn write(&self, writer: &mut BinaryWriter) {
+        writer.write_u16(self.min);
+        writer.write_u16(self.max);
+        writer.write_u16(self.default);
+    }
+
+    pub fn read(reader: &mut BinaryReader) -> Self {
+        Self {
+            min: reader.read_u16(),
+            max: reader.read_u16(),
+            default: reader.read_u16(),
+        }
+    }
+}
+
 #[repr(C, packed)]
 pub struct ModuleDesc<'a> {
     pub data: &'a [u8],
@@ -258,23 +290,59 @@ impl<'a> ModuleDesc<'a> {
     pub fn new(data: &'a [u8]) -> Result<Self, Box<dyn Error>> {
         let mut br = BinaryReader::new(data);
 
-        br.pos = data.len() - 4; // Seek back to last 4 bytes containing ending header offset
-        let header_offset = br.read_u32() as usize;
-        br.pos = header_offset;
+        br.pos = data.len() - 20; // Seek back to last 20 bytes containing 5 data offsets
 
-        let num_instruments = br.read_u32() as usize;
-        let (_, instruments, _) = unsafe {
-            data[0..size_of::<InstrumentDesc>() * num_instruments].align_to::<InstrumentDesc>()
+        let first_sample_offset = br.read_u32() as usize;
+        let first_envelope_offset = br.read_u32() as usize;
+        let first_instrument_offset = br.read_u32() as usize;
+        let first_channel_offset = br.read_u32() as usize;
+        let module_desc_offset = br.read_u32() as usize;
+
+        // Get samples
+        br.pos = first_sample_offset;
+        let num_samples = br.read_u8() as usize;
+        br.align_to_struct::<SampleDesc>();
+        let (_, samples, _) = unsafe {
+            data[br.pos..br.pos + size_of::<SampleDesc>() * num_samples].align_to::<SampleDesc>()
         };
+
+        // Get envelopes
+        br.pos = first_envelope_offset;
+        let num_envelopes = br.read_u8() as usize;
+        br.align_to_struct::<EnvelopeDesc>();
+        let (_, envelopes, _) = unsafe {
+            data[br.pos..br.pos + size_of::<EnvelopeDesc>() * num_envelopes]
+                .align_to::<EnvelopeDesc>()
+        };
+
+        // Get instruments
+        br.pos = first_instrument_offset;
+        let num_instruments = br.read_u8() as usize;
+        br.align_to_struct::<InstrumentDesc>();
+        let (_, instruments, _) = unsafe {
+            data[br.pos..br.pos + size_of::<InstrumentDesc>() * num_instruments]
+                .align_to::<InstrumentDesc>()
+        };
+
+        // Get channel event streams
+        br.pos = first_channel_offset;
+        let num_channels = br.read_u8() as usize;
+        br.align_to_struct::<ChannelDesc>();
+        let (_, channels, _) = unsafe {
+            data[br.pos..br.pos + size_of::<ChannelDesc>() * num_channels].align_to::<ChannelDesc>()
+        };
+
+        // Get module descriptor data
+        br.pos = module_desc_offset;
 
         Ok(ModuleDesc {
             data,
-            samples: &[],
-            envelopes: &[],
+            samples,
+            envelopes,
             instruments,
-            channels: &[],
-            tempo: Range::new(6),
-            bpm: Range::new(120),
+            channels,
+            tempo: Range::<u8>::read(&mut br),
+            bpm: Range::<u16>::read(&mut br),
         })
     }
 }

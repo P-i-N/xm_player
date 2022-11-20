@@ -16,6 +16,15 @@ impl<'a> BinaryReader<'a> {
         self.pos = (self.pos + num_bytes).min(self.data.len());
     }
 
+    pub fn align_to(&mut self, alignment: usize) {
+        let padding = (alignment - (self.pos % alignment)) % alignment;
+        self.pos += padding;
+    }
+
+    pub fn align_to_struct<T>(&mut self) {
+        self.align_to(core::mem::align_of::<T>());
+    }
+
     pub fn peek_u8(&self) -> u8 {
         if self.pos >= self.data.len() {
             return 0;
