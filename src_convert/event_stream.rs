@@ -4,7 +4,8 @@ use std::{collections::HashMap, hash::Hash};
 
 use super::*;
 use xm_player::BinaryWriter;
-use xm_player::RangeCoder;
+use xm_player::BitWriter;
+use xm_player::RangeEncoder;
 use xm_player::Row;
 use xm_player::{ChannelDesc, Symbol, SymbolEncodingSize};
 
@@ -55,6 +56,47 @@ impl EventStream {
         }
 
         result
+    }
+
+    pub fn compress_rle(&mut self) {
+        let mut slice_copy = Vec::new();
+
+        for segment_length in 1..2 {
+            if segment_length * 2 >= self.symbols.len() {
+                continue;
+            }
+
+            let mut num_repeats = 0;
+            let mut i = 0;
+
+            while i < self.symbols.len() - segment_length {
+                let current_slice = &self.symbols[i + segment_length..i + 2 * segment_length];
+
+                if num_repeats == 0 {
+                    if current_slice == &self.symbols[i..i + segment_length] {
+                        num_repeats = 1;
+                        i += segment_length;
+
+                        slice_copy.clear();
+                        slice_copy.extend_from_slice(current_slice);
+                    } else {
+                        i += 1;
+                    }
+                } else {
+                    if current_slice == &slice_copy {
+                        num_repeats += 1;
+                        i += segment_length;
+                    } else {
+                        if num_repeats > 0 {
+                            i -= num_repeats * segment_length;
+                            self.replace_rle_range(i, num_repeats);
+                        }
+
+                        num_repeats = 0;
+                    }
+                }
+            }
+        }
     }
 
     pub fn compress_rows_rle(&mut self) {
@@ -307,7 +349,7 @@ impl EventStream {
         );
     }
 
-    pub fn compress_entropy(&mut self) {
+    pub fn compress_entropy(&self) -> Vec<u8> {
         let mut data = Vec::new();
         let mut bw = BinaryWriter::new(&mut data);
 
@@ -323,10 +365,16 @@ impl EventStream {
             counts[*b as usize] += 1;
         }
 
-        let mut rc = RangeCoder::new();
+        let mut bit_output = Vec::<u8>::new();
+        let mut bit_writer = BitWriter::new(&mut bit_output);
+        let mut rc = RangeEncoder::new(&mut bit_writer);
         rc.symbol_counts = counts;
 
-        println!();
+        for b in &data {
+            rc.encode(*b as usize);
+        }
+
+        bit_output
     }
 
     pub fn write(&self, bw: &mut BinaryWriter) -> usize {
@@ -337,7 +385,7 @@ impl EventStream {
             bw.write_u8(self.row_dict.len() as u8);
             for (row, prob) in &self.row_dict {
                 let symbol = Symbol::RowEvent(*row);
-                symbol.write(bw);
+                //symbol.write(bw);
             }
         }
 
@@ -345,20 +393,25 @@ impl EventStream {
         {
             bw.write_u8(self.slice_dict.len() as u8);
             for symbol in &self.slice_dict {
-                symbol.write(bw);
+                //symbol.write(bw);
             }
 
             bw.write_u8(self.slices.len() as u8);
             for slice in &self.slices {
-                bw.write_u16(slice.0);
-                bw.write_u8((slice.1 - 4) as u8);
+                //bw.write_u16(slice.0);
+                //bw.write_u8((slice.1 - 4) as u8);
             }
         }
 
+        let symbol_data = self.compress_entropy();
+        bw.write_slice(&symbol_data);
+
+        /*
         // Symbols
         for symbol in &self.symbols {
             symbol.write(bw);
         }
+        */
 
         bw.pos() - start_pos
     }

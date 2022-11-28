@@ -116,8 +116,10 @@ impl Builder {
         {
             for channel in &mut self.channels {
                 channel.desc.data_offset = bw.pos() as u32;
-                channel.desc.data_length = channel.write(&mut bw) as u32;
+                //channel.desc.data_length = channel.write(&mut bw) as u32;
             }
+
+            self.channels.last().unwrap().write(&mut bw);
         }
 
         // Write offsets to channels, instruments and samples at the end of data block
@@ -194,10 +196,9 @@ impl Builder {
         // Unpacked symbols
         let orig_symbols = channel.symbols.clone();
 
-        channel.compress_rows_rle();
+        channel.compress_rle();
         channel.compress_with_dict();
-        channel.compress_repeated_parts();
-        channel.compress_entropy();
+        //channel.compress_repeated_parts();
 
         //let unpacked_symbols = channel.unpack_symbols();
         //assert!(orig_symbols == unpacked_symbols);

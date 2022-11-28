@@ -12,7 +12,7 @@ impl<'a> BitWriter<'a> {
 
     pub fn write<T>(&mut self, mut data: T, mut num_bits: u8)
     where
-        T: Copy + BitAnd<u8, Output = u8> + Shr<u8, Output = T>,
+        T: Copy + BitAnd<u8, Output = u8> + Shr<u8, Output = T> + Default,
     {
         while num_bits > 0 {
             let bits_left_in_byte = 8 - self.bit_pos;
@@ -31,7 +31,12 @@ impl<'a> BitWriter<'a> {
             self.bit_pos = (self.bit_pos + bits_to_write) % 8;
 
             num_bits -= bits_to_write;
-            data = data.shr(bits_to_write);
+
+            if (bits_to_write as usize) < core::intrinsics::size_of::<T>() {
+                data = data.shr(bits_to_write);
+            } else {
+                data = T::default();
+            }
         }
     }
 

@@ -22,7 +22,7 @@ mod utils;
 use utils::ButterworthFilter;
 
 mod entropy;
-pub use entropy::RangeCoder;
+pub use entropy::RangeEncoder;
 
 mod symbol;
 pub use symbol::Symbol;
