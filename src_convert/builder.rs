@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 use xm_player::*;
 
 pub struct Pattern {
@@ -85,7 +86,7 @@ impl Builder {
         bw.write_u8('1' as u8); // Minor version
 
         // Write samples
-        {
+        if false {
             for sample in &mut self.samples {
                 sample.desc.data_offset = bw.pos() as u32;
                 sample.desc.data_length = sample.data.len() as u32;
@@ -94,7 +95,7 @@ impl Builder {
         }
 
         // Write envelopes
-        {
+        if false {
             for envelope in &mut self.envelopes {
                 envelope.desc.data_offset = bw.pos() as u32;
                 envelope.desc.data_length = (envelope.tick_values.len() * 2) as u32;
@@ -120,7 +121,7 @@ impl Builder {
         }
 
         // Write offsets to channels, instruments and samples at the end of data block
-        {
+        if false {
             let first_sample_offset = bw.pos() as u32;
 
             bw.write_u8(self.samples.len() as u8);
@@ -196,9 +197,10 @@ impl Builder {
         channel.compress_rows_rle();
         channel.compress_with_dict();
         channel.compress_repeated_parts();
+        channel.compress_entropy();
 
-        let unpacked_symbols = channel.unpack_symbols();
-        assert!(orig_symbols == unpacked_symbols);
+        //let unpacked_symbols = channel.unpack_symbols();
+        //assert!(orig_symbols == unpacked_symbols);
 
         let current_encoding_size = channel.get_total_encoding_size();
 

@@ -133,11 +133,11 @@ impl Symbol {
     pub fn write(&self, bw: &mut BinaryWriter) {
         match self {
             Symbol::Dictionary(dict) => {
-                assert!(*dict < 128);
+                //assert!(*dict <= 255);
                 bw.write_u8(*dict);
             }
             Symbol::Reference(index) => {
-                assert!(*index < 64);
+                //assert!(*index < 64);
                 bw.write_u8(0b_1000_0000 | (*index));
             }
             Symbol::RLE(length) => {

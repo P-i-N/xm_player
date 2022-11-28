@@ -21,6 +21,9 @@ mod fixed;
 mod utils;
 use utils::ButterworthFilter;
 
+mod entropy;
+pub use entropy::RangeCoder;
+
 mod symbol;
 pub use symbol::Symbol;
 pub use symbol::SymbolEncodingSize;
@@ -56,6 +59,11 @@ pub use binary_reader::BinaryReader;
 
 mod binary_writer;
 pub use binary_writer::BinaryWriter;
+
+mod bit_reader;
+
+mod bit_writer;
+pub use bit_writer::BitWriter;
 
 mod platform;
 pub use platform::DummyInterface;

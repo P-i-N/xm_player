@@ -1,8 +1,10 @@
+use std::fmt::Binary;
 use std::hash::Hasher;
 use std::{collections::HashMap, hash::Hash};
 
 use super::*;
 use xm_player::BinaryWriter;
+use xm_player::RangeCoder;
 use xm_player::Row;
 use xm_player::{ChannelDesc, Symbol, SymbolEncodingSize};
 
@@ -11,7 +13,8 @@ pub struct EventStream {
     pub index: usize,
     pub desc: ChannelDesc,
     pub symbols: Vec<Symbol>,
-    pub row_dict: Vec<Row>,
+    pub row_dict: Vec<(Row, u16)>,
+    pub eom_count: u16,
     pub slice_dict: Vec<Symbol>,
     pub slices: Vec<(u16, u16)>,
     pub search_map: HashMap<u64, Vec<usize>>,
@@ -23,6 +26,35 @@ impl EventStream {
         self.symbols.drain(begin + 1..begin + num_repeats);
         self.symbols[begin] = Symbol::RLE(num_repeats as u16);
         rle_symbols
+    }
+
+    fn get_or_create_dict_slice(&mut self, begin: usize, length: usize) -> usize {
+        let mut result = self.slices.len();
+        let slice = &self.symbols[begin..begin + length];
+
+        // Find position of slice in slice dictionary
+        if let Some(pos) = self
+            .slice_dict
+            .windows(slice.len())
+            .position(|w| w == slice)
+        {
+            if let Some(slice_pos) = self
+                .slices
+                .iter()
+                .position(|s| s.0 == (pos as u16) && s.1 == (length as u16))
+            {
+                result = slice_pos;
+            } else {
+                self.slices.push((pos as u16, length as u16));
+            }
+        } else {
+            self.slices
+                .push((self.slice_dict.len() as u16, slice.len() as u16));
+
+            self.slice_dict.extend_from_slice(slice);
+        }
+
+        result
     }
 
     pub fn compress_rows_rle(&mut self) {
@@ -68,7 +100,7 @@ impl EventStream {
     pub fn get_total_encoding_size(&self) -> usize {
         let mut result = 2 + self.slices.len() * 3;
 
-        for row in &self.row_dict {
+        for (row, _) in &self.row_dict {
             result += Symbol::RowEvent(*row).encoding_size();
         }
 
@@ -81,16 +113,6 @@ impl EventStream {
         }
 
         result
-    }
-
-    fn only_row_events_or_dictionary(slice: &[Symbol]) -> bool {
-        for symbol in slice {
-            if symbol.is_reference() {
-                return false;
-            }
-        }
-
-        true
     }
 
     fn symbol_slice_hash(slice: &[Symbol]) -> u64 {
@@ -133,14 +155,14 @@ impl EventStream {
 
             best_repeated_positions.clear();
 
-            for start in 0..self.symbols.len() - 4 {
+            for start in 0..self.symbols.len() - 8 {
                 // Use hash of first 4 symbols as a lookup to search_map to get a vector
                 // of potential matching positions
                 let slice_header = &self.symbols[start..start + 4];
                 let hash = EventStream::symbol_slice_hash(&slice_header);
 
                 if let Some(search_positions) = self.search_map.get(&hash) {
-                    for length in (4..68).rev() {
+                    for length in (4..36) {
                         if start + length > self.symbols.len() {
                             break;
                         }
@@ -182,14 +204,8 @@ impl EventStream {
             }
 
             if best_count > 0 {
-                self.slices
-                    .push((self.slice_dict.len() as u16, best_length as u16));
-
-                // Copy repeated slice symbols to slice dictionary
                 let start = best_repeated_positions[0];
-                for symbol in &self.symbols[start..start + best_length] {
-                    self.slice_dict.push(*symbol);
-                }
+                let slice_index = self.get_or_create_dict_slice(start, best_length);
 
                 let mut new_symbols = Vec::<Symbol>::new();
                 let mut prev_pos = 0;
@@ -200,7 +216,7 @@ impl EventStream {
                     new_symbols.extend_from_slice(&self.symbols[prev_pos..pos]);
 
                     // Insert reference instead of subslice
-                    new_symbols.push(Symbol::Reference((self.slices.len() - 1) as u8));
+                    new_symbols.push(Symbol::Reference(slice_index as u8));
 
                     prev_pos = pos + best_length;
                 }
@@ -211,6 +227,8 @@ impl EventStream {
             } else {
                 break;
             }
+
+            //self.compress_rows_rle();
         }
 
         println!(
@@ -222,6 +240,7 @@ impl EventStream {
 
     pub fn compress_with_dict(&mut self) {
         let mut event_counts = HashMap::<Row, usize>::new();
+        let mut eom_count = 0;
 
         for symbol in &self.symbols {
             match symbol {
@@ -232,22 +251,41 @@ impl EventStream {
                         event_counts.insert(*row, 1);
                     }
                 }
-                _ => {}
+                _ => {
+                    eom_count += 1;
+                }
             }
         }
 
-        let mut most_used_events = Vec::<(Row, usize)>::from_iter(
-            event_counts
-                .iter()
-                .filter(|&(_, count)| *count > 1)
-                .map(|(row, count)| (*row, (*row).get_encoding_size() * (*count))),
-        );
+        let mut most_used_events =
+            Vec::<(Row, u16)>::from_iter(event_counts.iter().filter(|&(_, count)| *count > 1).map(
+                |(row, count)| {
+                    (
+                        *row,
+                        *count as u16,
+                        //((*row).get_encoding_size() * (*count)) as u16,
+                    )
+                },
+            ));
 
         most_used_events.sort_by(|item1, item2| item2.1.cmp(&item1.1));
 
         if most_used_events.len() > 128 {
             most_used_events.resize(128, (Row::new(), 0));
         }
+
+        let mut total_count = 0;
+        for (_, count) in &most_used_events {
+            total_count += *count;
+        }
+
+        print!("Most used event counts:");
+
+        for (_, count) in &most_used_events {
+            print!(" {}", count);
+        }
+
+        println!(" / total={}, other={}", total_count, eom_count);
 
         for symbol in &mut self.symbols {
             match symbol {
@@ -260,7 +298,7 @@ impl EventStream {
             }
         }
 
-        self.row_dict = Vec::from_iter(most_used_events.iter().map(|(row, _)| *row));
+        self.row_dict = most_used_events;
 
         println!(
             "- after applied dictionary: {} bytes, row dict. size={}",
@@ -269,13 +307,35 @@ impl EventStream {
         );
     }
 
+    pub fn compress_entropy(&mut self) {
+        let mut data = Vec::new();
+        let mut bw = BinaryWriter::new(&mut data);
+
+        for symbol in &self.symbols {
+            symbol.write(&mut bw);
+        }
+
+        // Data byte probabilities
+        let mut counts = Vec::<usize>::with_capacity(256);
+        counts.resize(256, 0);
+
+        for b in &data {
+            counts[*b as usize] += 1;
+        }
+
+        let mut rc = RangeCoder::new();
+        rc.symbol_counts = counts;
+
+        println!();
+    }
+
     pub fn write(&self, bw: &mut BinaryWriter) -> usize {
         let start_pos = bw.pos();
 
         // Event dictionary
         {
             bw.write_u8(self.row_dict.len() as u8);
-            for row in &self.row_dict {
+            for (row, prob) in &self.row_dict {
                 let symbol = Symbol::RowEvent(*row);
                 symbol.write(bw);
             }
@@ -320,7 +380,7 @@ impl EventStream {
 
             match symbol {
                 Symbol::Dictionary(index) => {
-                    result.push(Symbol::RowEvent(self.row_dict[index as usize]));
+                    result.push(Symbol::RowEvent(self.row_dict[index as usize].0));
                 }
                 Symbol::RowEvent(row) => {
                     result.push(Symbol::RowEvent(row));
