@@ -29,6 +29,14 @@ impl EventStream {
         rle_symbols
     }
 
+    fn replace_rle(&mut self, begin: usize, length: usize, num_repeats: usize) -> usize {
+        self.symbols
+            .drain(begin + length..begin + length + num_repeats - 1);
+
+        self.symbols[begin + length] = Symbol::RLE(num_repeats as u16);
+        begin + length + 1
+    }
+
     fn get_or_create_dict_slice(&mut self, begin: usize, length: usize) -> usize {
         let mut result = self.slices.len();
         let slice = &self.symbols[begin..begin + length];
@@ -58,23 +66,25 @@ impl EventStream {
         result
     }
 
-    pub fn compress_rle(&mut self) {
+    pub fn compress_rle(&mut self, min: usize, max: usize) {
         let mut slice_copy = Vec::new();
 
-        for segment_length in 1..2 {
+        for segment_length in (min..max + 1) {
             if segment_length * 2 >= self.symbols.len() {
                 continue;
             }
 
             let mut num_repeats = 0;
             let mut i = 0;
+            let mut begin = 0;
 
-            while i < self.symbols.len() - segment_length {
+            while i < self.symbols.len() - segment_length * 2 {
                 let current_slice = &self.symbols[i + segment_length..i + 2 * segment_length];
 
                 if num_repeats == 0 {
                     if current_slice == &self.symbols[i..i + segment_length] {
                         num_repeats = 1;
+                        begin = i;
                         i += segment_length;
 
                         slice_copy.clear();
@@ -88,13 +98,16 @@ impl EventStream {
                         i += segment_length;
                     } else {
                         if num_repeats > 0 {
-                            i -= num_repeats * segment_length;
-                            self.replace_rle_range(i, num_repeats);
+                            i = self.replace_rle(begin, segment_length, num_repeats);
                         }
 
                         num_repeats = 0;
                     }
                 }
+            }
+
+            if num_repeats > 0 {
+                self.replace_rle(begin, segment_length, num_repeats);
             }
         }
     }
@@ -131,10 +144,34 @@ impl EventStream {
             self.replace_rle_range(begin, num_repeats);
         }
 
+        let mut removed_rle_spaces = 0;
+
+        prev_symbol = self.symbols[0];
+        i = 1;
+        while i < self.symbols.len() {
+            let mut symbol = self.symbols[i];
+            match symbol {
+                Symbol::RLE(length) => {
+                    if length < 8 && prev_symbol.is_empty_row() {
+                        self.symbols[i - 1] = Symbol::Dictionary(length as u8);
+                        self.symbols.remove(i);
+                        symbol = self.symbols[i - 1];
+                        i -= 1;
+                        removed_rle_spaces += 1;
+                    }
+                }
+                _ => {}
+            }
+
+            prev_symbol = symbol;
+            i += 1;
+        }
+
         if total_num_repeats > 0 {
             println!(
-                "- after run-length encoding: {} bytes",
-                self.get_total_encoding_size()
+                "- after run-length encoding: {} bytes, {} spaces removed",
+                self.get_total_encoding_size(),
+                removed_rle_spaces
             );
         }
     }
@@ -204,7 +241,7 @@ impl EventStream {
                 let hash = EventStream::symbol_slice_hash(&slice_header);
 
                 if let Some(search_positions) = self.search_map.get(&hash) {
-                    for length in (4..36) {
+                    for length in (4..37) {
                         if start + length > self.symbols.len() {
                             break;
                         }
@@ -230,7 +267,7 @@ impl EventStream {
                         if count > 1 {
                             let slice_size = self.symbols[start..start + length].encoding_size();
 
-                            let saved_bytes = slice_size * (count - 1);
+                            let saved_bytes = length * (count - 1);
 
                             if saved_bytes > best_total_saved_bytes {
                                 best_length = length;
@@ -312,8 +349,8 @@ impl EventStream {
 
         most_used_events.sort_by(|item1, item2| item2.1.cmp(&item1.1));
 
-        if most_used_events.len() > 128 {
-            most_used_events.resize(128, (Row::new(), 0));
+        if most_used_events.len() > 120 {
+            most_used_events.resize(120, (Row::new(), 0));
         }
 
         let mut total_count = 0;
@@ -333,7 +370,7 @@ impl EventStream {
             match symbol {
                 Symbol::RowEvent(row) => {
                     if let Some(pos) = most_used_events.iter().position(|n| *row == n.0) {
-                        *symbol = Symbol::Dictionary(pos as u8);
+                        *symbol = Symbol::Dictionary((pos + 8) as u8);
                     }
                 }
                 _ => {}
@@ -385,7 +422,7 @@ impl EventStream {
             bw.write_u8(self.row_dict.len() as u8);
             for (row, prob) in &self.row_dict {
                 let symbol = Symbol::RowEvent(*row);
-                //symbol.write(bw);
+                symbol.write(bw);
             }
         }
 
@@ -393,13 +430,13 @@ impl EventStream {
         {
             bw.write_u8(self.slice_dict.len() as u8);
             for symbol in &self.slice_dict {
-                //symbol.write(bw);
+                symbol.write(bw);
             }
 
             bw.write_u8(self.slices.len() as u8);
             for slice in &self.slices {
-                //bw.write_u16(slice.0);
-                //bw.write_u8((slice.1 - 4) as u8);
+                bw.write_u16(slice.0);
+                bw.write_u8((slice.1 - 4) as u8);
             }
         }
 

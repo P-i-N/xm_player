@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     file_name.set_extension("um");
     std::fs::write(&file_name, &um_data)?;
 
-    let module_desc = xm_player::ModuleDesc::new(&um_data)?;
+    //let module_desc = xm_player::ModuleDesc::new(&um_data)?;
 
     Ok(())
 }

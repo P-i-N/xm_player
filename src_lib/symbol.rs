@@ -75,6 +75,13 @@ impl Symbol {
         }
     }
 
+    pub fn is_empty_row(&self) -> bool {
+        match self {
+            Symbol::RowEvent(row) => row.is_empty(),
+            _ => false,
+        }
+    }
+
     pub fn read(&mut self, br: &mut BinaryReader) {
         let mut b = br.read_u8();
 
