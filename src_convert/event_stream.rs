@@ -41,22 +41,7 @@ impl EventStream {
         let mut result = self.slices.len();
         let slice = &self.symbols[begin..begin + length];
 
-        // Find position of slice in slice dictionary
-        if let Some(pos) = self
-            .slice_dict
-            .windows(slice.len())
-            .position(|w| w == slice)
         {
-            if let Some(slice_pos) = self
-                .slices
-                .iter()
-                .position(|s| s.0 == (pos as u16) && s.1 == (length as u16))
-            {
-                result = slice_pos;
-            } else {
-                self.slices.push((pos as u16, length as u16));
-            }
-        } else {
             self.slices
                 .push((self.slice_dict.len() as u16, slice.len() as u16));
 
@@ -152,8 +137,8 @@ impl EventStream {
             let mut symbol = self.symbols[i];
             match symbol {
                 Symbol::RLE(length) => {
-                    if length < 8 && prev_symbol.is_empty_row() {
-                        self.symbols[i - 1] = Symbol::Dictionary(length as u8);
+                    if length <= 8 && prev_symbol.is_empty_row() {
+                        self.symbols[i - 1] = Symbol::Dictionary((length - 1) as u8);
                         self.symbols.remove(i);
                         symbol = self.symbols[i - 1];
                         i -= 1;
@@ -241,7 +226,7 @@ impl EventStream {
                 let hash = EventStream::symbol_slice_hash(&slice_header);
 
                 if let Some(search_positions) = self.search_map.get(&hash) {
-                    for length in (4..37) {
+                    for length in (4..21) {
                         if start + length > self.symbols.len() {
                             break;
                         }
@@ -265,8 +250,6 @@ impl EventStream {
                         }
 
                         if count > 1 {
-                            let slice_size = self.symbols[start..start + length].encoding_size();
-
                             let saved_bytes = length * (count - 1);
 
                             if saved_bytes > best_total_saved_bytes {
@@ -317,6 +300,34 @@ impl EventStream {
         );
     }
 
+    pub fn count_row_events(&self, event_counts: &mut HashMap<Row, usize>) {
+        for symbol in &self.symbols {
+            match symbol {
+                Symbol::RowEvent(row) => {
+                    if let Some(count) = event_counts.get_mut(row) {
+                        *count += 1;
+                    } else {
+                        event_counts.insert(*row, 1);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn count_byte_freqs(&self, freqs: &mut [usize; 256]) {
+        let mut data = Vec::new();
+        let mut bw = BinaryWriter::new(&mut data);
+
+        for symbol in &self.symbols {
+            symbol.write(&mut bw);
+        }
+
+        for b in &data {
+            freqs[*b as usize] += 1;
+        }
+    }
+
     pub fn compress_with_dict(&mut self) {
         let mut event_counts = HashMap::<Row, usize>::new();
         let mut eom_count = 0;
@@ -324,7 +335,7 @@ impl EventStream {
         for symbol in &self.symbols {
             match symbol {
                 Symbol::RowEvent(row) => {
-                    if let Some(count) = event_counts.get(&row) {
+                    if let Some(count) = event_counts.get(row) {
                         event_counts.insert(*row, count + 1);
                     } else {
                         event_counts.insert(*row, 1);
@@ -336,16 +347,18 @@ impl EventStream {
             }
         }
 
-        let mut most_used_events =
-            Vec::<(Row, u16)>::from_iter(event_counts.iter().filter(|&(_, count)| *count > 1).map(
-                |(row, count)| {
+        let mut most_used_events = Vec::<(Row, u16)>::from_iter(
+            event_counts
+                .iter()
+                .filter(|&(row, count)| *count > 1 && row.get_encoding_size() > 1)
+                .map(|(row, count)| {
                     (
                         *row,
                         *count as u16,
                         //((*row).get_encoding_size() * (*count)) as u16,
                     )
-                },
-            ));
+                }),
+        );
 
         most_used_events.sort_by(|item1, item2| item2.1.cmp(&item1.1));
 
@@ -386,26 +399,16 @@ impl EventStream {
         );
     }
 
-    pub fn compress_entropy(&self) -> Vec<u8> {
+    pub fn compress_entropy(&self, freqs: &[usize; 256]) -> Vec<u8> {
+        let mut bit_output = Vec::<u8>::new();
+        let mut rc = RangeEncoder::new(&mut bit_output, freqs);
+
         let mut data = Vec::new();
         let mut bw = BinaryWriter::new(&mut data);
 
         for symbol in &self.symbols {
             symbol.write(&mut bw);
         }
-
-        // Data byte probabilities
-        let mut counts = Vec::<usize>::with_capacity(256);
-        counts.resize(256, 0);
-
-        for b in &data {
-            counts[*b as usize] += 1;
-        }
-
-        let mut bit_output = Vec::<u8>::new();
-        let mut bit_writer = BitWriter::new(&mut bit_output);
-        let mut rc = RangeEncoder::new(&mut bit_writer);
-        rc.symbol_counts = counts;
 
         for b in &data {
             rc.encode(*b as usize);
@@ -414,7 +417,7 @@ impl EventStream {
         bit_output
     }
 
-    pub fn write(&self, bw: &mut BinaryWriter) -> usize {
+    pub fn write(&self, bw: &mut BinaryWriter, freqs: &[usize; 256]) -> usize {
         let start_pos = bw.pos();
 
         // Event dictionary
@@ -427,28 +430,40 @@ impl EventStream {
         }
 
         // References
-        {
+        if true {
             bw.write_u8(self.slice_dict.len() as u8);
             for symbol in &self.slice_dict {
                 symbol.write(bw);
             }
 
             bw.write_u8(self.slices.len() as u8);
+
+            for i in (0..self.slices.len()).step_by(2) {
+                let slice1_len = self.slices[i].1 as u8;
+                let slice2_len = if i + 1 < self.slices.len() {
+                    self.slices[i + 1].1 as u8
+                } else {
+                    0
+                };
+
+                bw.write_u8(slice1_len | (slice2_len << 4));
+            }
+
+            /*
             for slice in &self.slices {
-                bw.write_u16(slice.0);
+                //bw.write_u16(slice.0);
                 bw.write_u8((slice.1 - 4) as u8);
             }
+            */
         }
 
-        let symbol_data = self.compress_entropy();
+        let symbol_data = self.compress_entropy(&freqs);
         bw.write_slice(&symbol_data);
 
-        /*
         // Symbols
         for symbol in &self.symbols {
-            symbol.write(bw);
+            //symbol.write(bw);
         }
-        */
 
         bw.pos() - start_pos
     }

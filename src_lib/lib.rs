@@ -3,6 +3,7 @@
 #![feature(stdsimd)]
 #![feature(error_in_core)]
 #![feature(core_intrinsics)]
+#![feature(hash_drain_filter)]
 #![warn(dead_code)]
 
 extern crate alloc;

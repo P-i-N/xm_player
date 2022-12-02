@@ -103,20 +103,49 @@ impl Builder {
             }
         }
 
+        let mut byte_freqs = [0usize; 256];
+        let mut shared_dict_rows: HashMap<Row, usize> = HashMap::new();
+
         // Build channel event streams
         {
             self.channels.clear();
             for channel_index in 0..self.num_channels {
                 let channel = self.extract_channel(channel_index);
+                channel.count_byte_freqs(&mut byte_freqs);
+
+                for (row, _) in &channel.row_dict {
+                    if let Some(count) = shared_dict_rows.get_mut(row) {
+                        *count += 1;
+                    } else {
+                        shared_dict_rows.insert(*row, 1);
+                    }
+                }
+
                 self.channels.push(channel);
             }
         }
+
+        // Write byte frequencies
+        {
+            for &f in &byte_freqs {
+                if f < 255 {
+                    bw.write_u8(f as u8);
+                } else {
+                    bw.write_u8(255);
+                }
+            }
+        }
+
+        println!("Byte freqs: {:?}", byte_freqs);
+
+        shared_dict_rows.drain_filter(|_, count| *count <= 1);
+        println!("Num shared dict. rows: {}", shared_dict_rows.len());
 
         // Write channel event streams
         {
             for channel in &mut self.channels {
                 channel.desc.data_offset = bw.pos() as u32;
-                channel.desc.data_length = channel.write(&mut bw) as u32;
+                channel.desc.data_length = channel.write(&mut bw, &byte_freqs) as u32;
             }
 
             //self.channels.last().unwrap().write(&mut bw);

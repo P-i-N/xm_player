@@ -1,3 +1,5 @@
+#![feature(hash_drain_filter)]
+
 use std::{error, path::PathBuf};
 
 mod event_stream;
