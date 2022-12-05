@@ -3,11 +3,11 @@ use std::hash::Hasher;
 use std::{collections::HashMap, hash::Hash};
 
 use super::*;
-use xm_player::BinaryWriter;
-use xm_player::BitWriter;
-use xm_player::RangeEncoder;
-use xm_player::Row;
-use xm_player::{ChannelDesc, Symbol, SymbolEncodingSize};
+use xmplay::BinaryWriter;
+use xmplay::BitWriter;
+use xmplay::RangeEncoder;
+use xmplay::Row;
+use xmplay::{ChannelDesc, Symbol, SymbolEncodingSize};
 
 #[derive(Default)]
 pub struct EventStream {
@@ -421,7 +421,7 @@ impl EventStream {
         let start_pos = bw.pos();
 
         // Event dictionary
-        {
+        if false {
             bw.write_u8(self.row_dict.len() as u8);
             for (row, prob) in &self.row_dict {
                 let symbol = Symbol::RowEvent(*row);
@@ -430,7 +430,7 @@ impl EventStream {
         }
 
         // References
-        if true {
+        if false {
             bw.write_u8(self.slice_dict.len() as u8);
             for symbol in &self.slice_dict {
                 symbol.write(bw);
@@ -457,12 +457,12 @@ impl EventStream {
             */
         }
 
-        let symbol_data = self.compress_entropy(&freqs);
-        bw.write_slice(&symbol_data);
+        //let symbol_data = self.compress_entropy(&freqs);
+        //bw.write_slice(&symbol_data);
 
         // Symbols
         for symbol in &self.symbols {
-            //symbol.write(bw);
+            symbol.write(bw);
         }
 
         bw.pos() - start_pos
@@ -529,7 +529,7 @@ impl EventStream {
 }
 
 pub mod tests {
-    use xm_player::Symbol;
+    use xmplay::Symbol;
 
     use super::EventStream;
 

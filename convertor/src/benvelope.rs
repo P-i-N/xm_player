@@ -1,6 +1,6 @@
 use super::*;
-use xm_player::BinaryWriter;
-use xm_player::EnvelopeDesc;
+use xmplay::BinaryWriter;
+use xmplay::EnvelopeDesc;
 
 #[derive(Clone, Default)]
 pub struct BEnvelope {

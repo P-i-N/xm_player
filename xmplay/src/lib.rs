@@ -73,6 +73,7 @@ pub use platform::PlatformInterface;
 ///////////////////////////////////////////////////////////////////////////////
 
 mod math {
+    #[cfg(target = "thumbv7em-none-eabihf")]
     use micromath::F32Ext;
 
     pub fn fract(value: f32) -> f32 {

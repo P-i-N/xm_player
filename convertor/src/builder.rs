@@ -1,6 +1,6 @@
 use super::*;
 use std::collections::HashMap;
-use xm_player::*;
+use xmplay::*;
 
 pub struct Pattern {
     pub num_rows: usize,
@@ -126,7 +126,7 @@ impl Builder {
         }
 
         // Write byte frequencies
-        {
+        if false {
             for &f in &byte_freqs {
                 if f < 255 {
                     bw.write_u8(f as u8);
@@ -145,10 +145,10 @@ impl Builder {
         {
             for channel in &mut self.channels {
                 channel.desc.data_offset = bw.pos() as u32;
-                channel.desc.data_length = channel.write(&mut bw, &byte_freqs) as u32;
+                //channel.desc.data_length = channel.write(&mut bw, &byte_freqs) as u32;
             }
 
-            //self.channels.last().unwrap().write(&mut bw);
+            self.channels[1].write(&mut bw, &byte_freqs);
         }
 
         // Write offsets to channels, instruments and samples at the end of data block
@@ -227,7 +227,7 @@ impl Builder {
 
         channel.compress_rows_rle();
         channel.compress_with_dict();
-        channel.compress_repeated_parts();
+        //channel.compress_repeated_parts();
 
         //let unpacked_symbols = channel.unpack_symbols();
         //assert!(orig_symbols == unpacked_symbols);

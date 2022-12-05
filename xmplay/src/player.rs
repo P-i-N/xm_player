@@ -241,7 +241,7 @@ impl<'a> Player<'a> {
             );
 
             if vl > 0 && vr > 0 {
-                const USE_FILTER: bool = true;
+                const USE_FILTER: bool = false;
 
                 unsafe {
                     let mut dst_ptr = self.mix_buffer.as_mut_ptr();

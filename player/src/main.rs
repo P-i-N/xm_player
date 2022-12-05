@@ -7,9 +7,9 @@ mod win32;
 #[cfg(target_os = "windows")]
 use win32::Win32 as Platform;
 
-use xm_player::Module;
-use xm_player::PlatformInterface;
-use xm_player::Player;
+use xmplay::Module;
+use xmplay::PlatformInterface;
+use xmplay::Player;
 
 use std::error;
 use std::time::Duration;
@@ -107,7 +107,7 @@ fn on_player_tick(player: &Player, dur: Duration) {
 }
 
 fn main() -> Result<(), Box<dyn error::Error>> {
-    let embedded_data = include_bytes!("../alf.xm");
+    let embedded_data = include_bytes!("../../data/alf.xm");
 
     const SAMPLE_RATE: usize = 48000;
     let platform: Box<dyn PlatformInterface> = Box::new(Platform::new(SAMPLE_RATE).unwrap());

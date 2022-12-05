@@ -1,0 +1,10 @@
+[package]
+name = "player"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xmplay = { path = "../xmplay" }
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.12.0"

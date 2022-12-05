@@ -1,0 +1,47 @@
+0xxxxxxx: x>=0 && x<=97 - full note spec. follows
+          x>97 && x<=127 - dictionary index 
+100xxxxx - compressed note
+110xxxxx - RLE, previous note repeated x+1 times
+111xxxxx - x<31: shortest back-reference
+           x=31: short back-reference
+101xxxxx - full back-reference:
+           101xxxxx xxxyyyyy yyyyyyyy - 8bit length + 12bit offset
+
+
+00000 * 
+00001 *
+00010 *
+00011 *
+00100 *
+00101 *
+00110 *
+00111 *
+01000 *
+01001 *
+01010 *
+01011 *
+01100 *
+01101 *
+01110 *
+01111 ---
+10000 *
+10001 *
+10010 *
+10011 *
+10100 *
+10101 *
+10110 *
+10111 ---
+11000 *
+11001 *
+11010 *
+11011 ---
+11100 *
+11101 ---
+11110 ---
+11111 ---
+
+0xxxxxxx 0-127 - dictionary reference
+10xxxxxx Slice reference
+110xxxxx RLE 1-32 repeats
+111xxxxx Event mask

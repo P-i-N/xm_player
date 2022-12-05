@@ -3,7 +3,7 @@ use std::mem::transmute;
 
 use super::*;
 use benvelope::BEnvelope;
-use xm_player::*;
+use xmplay::*;
 
 #[derive(Default)]
 struct ItemCounts {
