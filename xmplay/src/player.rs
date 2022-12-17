@@ -1,24 +1,45 @@
-use super::{Channel, Module, NibbleTest, PlatformInterface, Vec};
+use super::{Channel, Module, NibbleTest, Row, Vec};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct SongState {
+    // Beats per minute
     pub bpm: usize,
+
+    // Tempo (number of ticks per row)
     pub tempo: usize,
+
+    // Current ordered pattern index
+    pub pattern_order_index: usize,
+
+    // Current pattern index
+    pub pattern_index: usize,
+
+    // Current tick inside a row, goes from 0 to module.tempo-1
+    pub row_tick: usize,
+
+    // Current row inside a pattern
+    pub row_index: usize,
+}
+
+pub enum CallbackPosition {
+    RenderBegin,
+    TickBegin,
+    ChannelTickBegin,
+    ChannelTickEnd,
+    ChannelMixBegin,
+    ChannelMixEnd,
+    TickEnd,
+    MixBegin,
+    MixEnd,
+    RenderEnd,
 }
 
 pub struct Player<'a> {
     pub module: &'a Module<'a>,
-    pub platform: &'a dyn PlatformInterface,
     pub sample_rate: usize,
     pub oversample: usize,
     pub samples_per_tick: usize,
     pub song_state: SongState,
-    pub pattern_order_index: usize,
-    pub pattern_index: usize,
-    pub row_index: usize,
-
-    // Current tick inside a row, goes from 0 to module.tempo-1
-    pub row_tick: usize,
 
     pub num_generated_samples: usize,
 
@@ -36,41 +57,48 @@ pub struct Player<'a> {
 
     // Mix of all channels for each tick - stereo
     mix_buffer: Vec<i16>,
+
+    // Tick callback
+    pub callback: Option<Box<dyn FnMut(CallbackPosition, &SongState, &Module<'a>)>>,
 }
 
 fn get_samples_per_tick(sample_rate: usize, bpm: usize, oversample: usize) -> usize {
     (((sample_rate * 2500) / bpm) / 1000) * oversample
 }
 
+macro_rules! notify_callback {
+    ($self:ident, $position:ident) => {
+        if let Some(cb) = &mut $self.callback {
+            cb(
+                CallbackPosition::$position,
+                &$self.song_state,
+                &$self.module,
+            );
+        }
+    };
+}
+
 impl<'a> Player<'a> {
-    pub fn new(
-        module: &'a Module,
-        platform: &'a dyn PlatformInterface,
-        sample_rate: usize,
-        oversample: usize,
-    ) -> Player<'a> {
+    pub fn new(module: &'a Module, sample_rate: usize, oversample: usize) -> Self {
         let samples_per_tick = get_samples_per_tick(sample_rate, module.bpm, oversample);
 
         let mut result = Player {
             module,
-            platform,
             sample_rate: sample_rate,
             oversample,
             samples_per_tick,
             song_state: SongState {
                 bpm: module.bpm,
                 tempo: module.tempo,
+                ..Default::default()
             },
-            pattern_order_index: 0,
-            pattern_index: 0,
-            row_index: 0,
-            row_tick: 0,
             num_generated_samples: 0,
             loop_current_pattern: false,
             loop_count: 0,
             channels: Vec::new(),
             channel_buffer: Vec::with_capacity(samples_per_tick),
             mix_buffer: Vec::with_capacity(samples_per_tick * 2),
+            callback: None,
         };
 
         result
@@ -85,18 +113,24 @@ impl<'a> Player<'a> {
                 .push(Channel::new(module, index, oversample * sample_rate));
         }
 
-        //result.solo_channel(0);
-        //result.pattern_order_index = 5;
-        //result.loop_current_pattern = true;
+        result.reset();
+
+        /*
+        result.solo_channel(21);
+        result.toggle_channel(22);
+        result.toggle_channel(23);
+        result.loop_current_pattern = true;
+        result.song_state.pattern_order_index = 18;
+        */
 
         result
     }
 
     pub fn reset(&mut self) {
-        self.pattern_order_index = 0;
-        self.pattern_index = 0;
-        self.row_index = 0;
-        self.row_tick = 0;
+        self.song_state.pattern_order_index = 0;
+        self.song_state.pattern_index = 0;
+        self.song_state.row_index = usize::MAX;
+        self.song_state.row_tick = usize::MAX;
         self.loop_count = 0;
         self.channel_buffer.fill(0);
         self.mix_buffer.fill(0);
@@ -106,66 +140,68 @@ impl<'a> Player<'a> {
         }
     }
 
+    pub fn set_tick_callback(
+        &mut self,
+        callback: impl FnMut(CallbackPosition, &SongState, &Module<'a>) + 'static,
+    ) {
+        self.callback = Some(Box::new(callback));
+    }
+
     // Calculate tick duration in microseconds
     pub fn get_tick_duration_us(&self) -> u32 {
         (1000000 * (self.samples_per_tick as u32)) / ((self.oversample * self.sample_rate) as u32)
     }
 
-    /*
-    fn print_row(&self) {
-        let mut s = String::new();
-
-        for i in 0..self.channels.len() {
-            let pattern_index = self.module.pattern_order[self.pattern_order_index];
-            let row = self.module.patterns[pattern_index].channels[i][self.row_index];
-
-            if self.row_index == 0 {
-                s += "\x1b[0m-+-";
-            } else {
-                s += "\x1b[0m | ";
-            }
-
-            if !self.channels[i].mute {
-                s += row.to_colored_string().as_str();
-            } else {
-                s += "           ";
-            }
-        }
-
-        print!("{:02}{}", self.row_index, s);
-
-        println!(
-            "\x1b[0m | CPU: {}us / {:.1}%",
-            self.row_cpu_duration.as_micros(),
-            self.row_cpu_usage
-        );
+    pub fn get_channel_row_ordered(&self, channel_index: usize) -> Row {
+        self.module.get_channel_row_ordered(
+            self.song_state.pattern_order_index,
+            channel_index,
+            self.song_state.row_index,
+        )
     }
-    */
 
     fn step_row(&mut self) {
         let mut pattern_break = false;
+        let mut ss = self.song_state;
+
+        ss.row_tick = 0;
+        ss.row_index = ss.row_index.wrapping_add(1);
+
+        if ss.row_index >= self.module.patterns[ss.pattern_index].num_rows {
+            ss.row_index = 0;
+
+            if !self.loop_current_pattern {
+                ss.pattern_order_index += 1;
+            }
+
+            if ss.pattern_order_index >= self.module.pattern_order.len() {
+                ss.pattern_order_index = self.module.restart_position;
+                ss.row_index = 0;
+                self.loop_count += 1;
+            }
+        }
 
         for channel_index in 0..self.channels.len() {
             let row = self.module.get_channel_row_ordered(
-                self.pattern_order_index,
+                ss.pattern_order_index,
                 channel_index,
-                self.row_index,
+                ss.row_index,
             );
 
             match row.effect_type {
                 // Pattern break
                 0x0D => {
-                    self.pattern_order_index += 1;
-                    if self.pattern_order_index >= self.module.pattern_order.len() {
-                        self.pattern_order_index = self.module.restart_position;
+                    ss.pattern_order_index += 1;
+                    if ss.pattern_order_index >= self.module.pattern_order.len() {
+                        ss.pattern_order_index = self.module.restart_position;
                         self.loop_count += 1;
                     }
 
-                    self.pattern_index = self.module.pattern_order[self.pattern_order_index];
-                    self.row_index =
+                    ss.pattern_index = self.module.pattern_order[ss.pattern_order_index];
+                    ss.row_index =
                         ((row.effect_param >> 4) * 10 + row.effect_param & 0x0F) as usize;
 
-                    if self.row_index < self.module.patterns[self.pattern_index].num_rows {
+                    if ss.row_index < self.module.patterns[ss.pattern_index].num_rows {
                         pattern_break = true;
                     }
                 }
@@ -174,18 +210,15 @@ impl<'a> Player<'a> {
                 0x0F => {
                     // Set tempo
                     if row.effect_param.test_high_nibble(0) {
-                        self.song_state.tempo = row.effect_param as usize;
+                        ss.tempo = row.effect_param as usize;
                     }
                     // Set BPM
                     else {
-                        self.song_state.bpm = row.effect_param as usize;
+                        ss.bpm = row.effect_param as usize;
                     }
 
-                    let samples_per_tick = get_samples_per_tick(
-                        self.sample_rate,
-                        self.song_state.bpm,
-                        self.oversample,
-                    );
+                    let samples_per_tick =
+                        get_samples_per_tick(self.sample_rate, ss.bpm, self.oversample);
 
                     if samples_per_tick != self.samples_per_tick {
                         self.channel_buffer.resize(samples_per_tick, 0);
@@ -198,50 +231,47 @@ impl<'a> Player<'a> {
             }
         }
 
-        self.row_tick = 0;
-
-        if pattern_break {
-            return;
+        if !pattern_break {
+            ss.pattern_index = self.module.pattern_order[ss.pattern_order_index];
         }
 
-        self.pattern_index = self.module.pattern_order[self.pattern_order_index];
-        self.row_index += 1;
-
-        if self.row_index >= self.module.patterns[self.pattern_index].num_rows {
-            self.row_index = 0;
-
-            if !self.loop_current_pattern {
-                self.pattern_order_index += 1;
-            }
-
-            if self.pattern_order_index >= self.module.pattern_order.len() {
-                self.pattern_order_index = self.module.restart_position;
-                self.row_index = 0;
-                self.loop_count += 1;
-            }
-        }
+        self.song_state = ss;
     }
 
     #[inline(never)]
     fn tick(&mut self) {
+        self.song_state.row_tick = self.song_state.row_tick.wrapping_add(1) % self.song_state.tempo;
+        if self.song_state.row_tick == 0 {
+            self.step_row();
+        }
+
+        notify_callback!(self, TickBegin);
+
         // Clear 32bit mix buffer
         self.mix_buffer.fill(0);
+
+        self.song_state.pattern_index =
+            self.module.pattern_order[self.song_state.pattern_order_index];
 
         for i in 0..self.channels.len() {
             let channel = &mut self.channels[i];
 
-            self.pattern_index = self.module.pattern_order[self.pattern_order_index];
-            let row = self.module.patterns[self.pattern_index].channels[i][self.row_index];
-
-            let (vl, vr) = channel.tick(
-                row,
-                &self.song_state,
-                self.row_tick,
-                &mut self.channel_buffer,
+            let row = self.module.get_channel_row_ordered(
+                self.song_state.pattern_order_index,
+                i,
+                self.song_state.row_index,
             );
 
+            notify_callback!(self, ChannelTickBegin);
+
+            let (vl, vr) = channel.tick(row, &self.song_state, &mut self.channel_buffer);
+
+            notify_callback!(self, ChannelTickEnd);
+
+            notify_callback!(self, ChannelMixBegin);
+
             if vl > 0 && vr > 0 {
-                const USE_FILTER: bool = false;
+                const USE_FILTER: bool = true;
 
                 unsafe {
                     let mut dst_ptr = self.mix_buffer.as_mut_ptr();
@@ -276,21 +306,24 @@ impl<'a> Player<'a> {
                     }
                 }
             }
+
+            notify_callback!(self, ChannelMixEnd);
         }
 
         self.num_generated_samples = self.mix_buffer.len() / self.oversample;
 
-        self.row_tick += 1;
-        if self.row_tick >= self.song_state.tempo {
-            self.step_row();
-        }
+        notify_callback!(self, TickEnd);
     }
 
     pub fn render(&mut self, output: &mut [i16]) -> usize {
+        notify_callback!(self, RenderBegin);
+
         let mut num_filled_samples = 0;
 
         while num_filled_samples < output.len() {
             if self.num_generated_samples > 0 {
+                notify_callback!(self, MixBegin);
+
                 let to_copy = core::cmp::min(
                     self.num_generated_samples,
                     output.len() - num_filled_samples,
@@ -317,10 +350,14 @@ impl<'a> Player<'a> {
 
                 self.num_generated_samples -= to_copy;
                 num_filled_samples += to_copy;
+
+                notify_callback!(self, MixEnd);
             } else {
                 self.tick();
             }
         }
+
+        notify_callback!(self, RenderEnd);
 
         num_filled_samples
     }
@@ -329,6 +366,11 @@ impl<'a> Player<'a> {
         for channel in &mut self.channels {
             channel.mute = channel.index != channel_index;
         }
+    }
+
+    pub fn toggle_channel(&mut self, channel_index: usize) {
+        let channel = &mut self.channels[channel_index];
+        channel.mute = !channel.mute;
     }
 
     pub fn unmute_all(&mut self) {

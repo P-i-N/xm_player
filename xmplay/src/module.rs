@@ -5,6 +5,7 @@ use super::FormatError;
 use super::Instrument;
 use super::Pattern;
 use super::Row;
+use super::Sample;
 
 pub struct Module<'a> {
     pub data: &'a [u8],
@@ -58,6 +59,20 @@ impl<'a> Module<'a> {
             Some(self.instruments[index].clone())
         } else {
             None
+        }
+    }
+
+    pub fn get_instrument_and_sample(
+        &self,
+        index: usize,
+        note: usize,
+    ) -> (Option<Rc<Instrument>>, Option<Rc<Sample>>) {
+        if index < self.instruments.len() {
+            let instrument = self.instruments[index].clone();
+            let sample = instrument.get_sample_for_note(note as usize);
+            (Some(instrument), sample)
+        } else {
+            (None, None)
         }
     }
 

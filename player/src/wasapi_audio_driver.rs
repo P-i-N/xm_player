@@ -1,7 +1,6 @@
-use super::PlatformInterface;
 use wasapi::*;
 
-pub struct Win32 {
+pub struct WasapiAudioDriver {
     _device: wasapi::Device,
     audio_client: wasapi::AudioClient,
     event_handle: wasapi::Handle,
@@ -9,7 +8,7 @@ pub struct Win32 {
     block_size: usize,
 }
 
-impl Win32 {
+impl WasapiAudioDriver {
     pub fn new(sample_rate: usize) -> Option<Self> {
         wasapi::initialize_mta().unwrap();
 
@@ -34,7 +33,7 @@ impl Win32 {
 
         audio_client.start_stream().unwrap();
 
-        Some(Win32 {
+        Some(WasapiAudioDriver {
             _device: device,
             audio_client,
             event_handle,
@@ -42,16 +41,14 @@ impl Win32 {
             block_size,
         })
     }
-}
 
-impl PlatformInterface for Win32 {
-    fn get_available_samples(&self) -> usize {
+    pub fn get_available_samples(&self) -> usize {
         let result = self.audio_client.get_available_space_in_frames().unwrap() as usize
             * (self.block_size / 2);
         result - (result % self.block_size)
     }
 
-    fn audio_wait(&self) -> bool {
+    pub fn wait(&self) -> bool {
         if self.event_handle.wait_for_event(10000).is_err() {
             self.audio_client.stop_stream().unwrap();
             return false;
@@ -60,7 +57,7 @@ impl PlatformInterface for Win32 {
         return true;
     }
 
-    fn audio_render(&self, buffer: &[i16]) {
+    pub fn render(&self, buffer: &[i16]) {
         unsafe {
             let (_, bytes, _) = buffer.align_to::<u8>();
             self.render_client

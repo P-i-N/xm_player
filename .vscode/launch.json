@@ -6,44 +6,33 @@
 	"configurations": [
 		{
 			"name": "Debug",
-			"type": "cppvsdbg",
+			"type": "lldb",
 			"request": "launch",
-			"program": "${workspaceRoot}/target/debug/${workspaceFolderBasename}.exe",
+			"program": "${workspaceRoot}/target/debug/player.exe",
 			"args": [],
-			"stopAtEntry": false,
 			"cwd": "${workspaceRoot}/target/debug",
-			"environment": [],
 			"console": "integratedTerminal",
 			"preLaunchTask": "rust: cargo build"
 		},
 		{
 			"name": "xm_convert Debug",
-			"type": "cppvsdbg",
+			"type": "lldb",
 			"request": "launch",
 			"program": "${workspaceRoot}/target/debug/xm_convert",
 			"args": [],
-			"stopAtEntry": false,
 			"cwd": "${workspaceRoot}/target/debug",
-			"environment": [
-				{
-					"name": "RUST_BACKTRACE",
-					"value": "1"
-				}
-			],
 			"console": "integratedTerminal",
 			"preLaunchTask": "rust: cargo build"
 		},		
 		{
 			"name": "Release",
-			"type": "cppvsdbg",
+			"type": "lldb",
 			"request": "launch",
-			"program": "${workspaceRoot}/target/release/${workspaceFolderBasename}.exe",
+			"program": "${workspaceRoot}/target/release/player.exe",
 			"args": [],
-			"stopAtEntry": false,
 			"cwd": "${workspaceRoot}/target/release",
-			"environment": [],
 			"console": "integratedTerminal",
-			"preLaunchTask": "rust: cargo build"
+			"preLaunchTask": "rust: cargo build release"
 		}
 	]
 }

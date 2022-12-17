@@ -1,7 +1,6 @@
 use super::math::*;
 use super::player::SongState;
 use super::ButterworthFilter;
-use super::Envelope;
 use super::Fixed;
 use super::Instrument;
 use super::LoopType;
@@ -35,40 +34,22 @@ fn get_vibrato_period(ticks: usize) -> f32 {
     -sin(3.14159265358f32 * 2.0f32 * (ticks as f32 / 64.0))
 }
 
-fn follow_envelope(mut ticks: usize, note_released: bool, envelope: &Envelope) -> usize {
-    if envelope.tick_values.is_empty() {
-        return ticks;
-    }
-
-    if !note_released && envelope.sustain != usize::MAX {
-        if ticks < envelope.sustain as usize {
-            ticks += 1
-        }
-    } else {
-        ticks += 1;
-        if ticks == envelope.loop_end {
-            ticks = envelope.loop_start;
-        }
-    }
-
-    ticks
-}
-
 pub struct Channel<'a> {
     module: &'a Module<'a>,
-    song_state: SongState,
     pub index: usize,
     pub mute: bool,
-    inv_sample_rate: f32,
+    sample_rate: f32,
     row: Row,
     sample: Option<Rc<Sample>>,
     instrument: Option<Rc<Instrument>>,
     note: f32,
     note_volume: usize,
     note_panning: usize,
+    note_fadeout: i32,
     note_period: f32,
     note_target_period: f32,
     note_frequency: f32,
+    note_step: f32,
     note_step_fp: Fixed,
     note_released: bool,
     loop_dir_forward: bool,
@@ -89,20 +70,21 @@ impl<'a> Channel<'a> {
     pub fn new(module: &'a Module, index: usize, sample_rate: usize) -> Self {
         Channel {
             module,
-            song_state: SongState { bpm: 0, tempo: 0 },
             index,
             mute: false,
-            inv_sample_rate: 1.0 / (sample_rate as f32),
+            sample_rate: sample_rate as f32,
             row: Row::new(),
             sample: None,
             instrument: None,
             note: 0.0,
             note_volume: 0,
             note_panning: 0,
+            note_fadeout: 65535,
             note_period: 0.0,
             note_target_period: 0.0,
             note_frequency: 0.0,
-            note_step_fp: Fixed::from_u32(0),
+            note_step: 0.0,
+            note_step_fp: Fixed::default(),
             note_released: false,
             loop_dir_forward: true,
             volume_envelope_ticks: 0,
@@ -112,14 +94,15 @@ impl<'a> Channel<'a> {
             vibrato_ticks: 0,
             vibrato_note_offset: 0.0,
             last_nonzero_effect_param: 0,
-            sample_offset_fp: Fixed::from_u32(0),
+            sample_offset_fp: Fixed::default(),
             final_volume: 0,
             final_panning: 0,
             filter: ButterworthFilter::new(),
         }
     }
 
-    fn is_note_active(&self) -> bool {
+    /// Returns true if the channel has an instrument and a sample assigned
+    fn has_instrument_and_sample(&self) -> bool {
         self.instrument.is_some() && self.sample.is_some()
     }
 
@@ -142,14 +125,16 @@ impl<'a> Channel<'a> {
                 self.note_target_period = self.note_period;
             }
 
-            self.note_step_fp = Fixed::from_f32(self.note_frequency * self.inv_sample_rate);
+            self.note_step = ((self.note_frequency as f64) / (self.sample_rate as f64)) as f32;
+            self.note_step_fp = self.note_step.into();
 
             if !keep_volume {
                 self.note_volume = sample.volume as usize;
+                self.note_fadeout = 65536;
             }
 
             if !keep_position {
-                self.sample_offset_fp = Fixed::from_u32(0);
+                self.sample_offset_fp = Fixed::default();
                 self.note_released = false;
                 self.loop_dir_forward = true;
             }
@@ -167,12 +152,52 @@ impl<'a> Channel<'a> {
 
     fn note_off(&mut self) {
         self.note_released = true;
+
+        if let Some(instrument) = &self.instrument {
+            if !instrument.volume_envelope.is_enabled() {
+                self.note_kill();
+            }
+        } else {
+            self.note_kill();
+        }
     }
 
     fn note_kill(&mut self) {
+        self.note_cut();
         self.note_released = true;
         self.instrument = None;
         self.sample = None;
+    }
+
+    fn note_cut(&mut self) {
+        // This is NOT the same as note_kill, as it does not reset the instrument
+        self.note_volume = 0;
+    }
+
+    fn tick_new_row_(&mut self, row: Row) {
+        if row.instrument > 0 {
+            if self.row.has_portamento() && self.has_instrument_and_sample() {
+                self.note_on(self.row.note, true, false, true, false);
+            } else if row.note == 0 && self.has_instrument_and_sample() {
+                self.note_on(self.row.note, false, false, true, false);
+            } else if (row.instrument as usize) > self.module.num_instruments {
+                self.note_kill();
+            } else {
+                self.instrument = self.module.get_instrument((row.instrument - 1) as usize);
+            }
+        }
+
+        if row.has_valid_note() {
+            if self.row.has_portamento() && self.has_instrument_and_sample() {
+                //
+            } else if let Some(instrument) = &self.instrument {
+                //
+            } else {
+                self.note_cut();
+            }
+        } else if row.is_note_off() {
+            self.note_off();
+        }
     }
 
     fn tick_new_row(&mut self, row: Row) {
@@ -182,16 +207,15 @@ impl<'a> Channel<'a> {
         let mut keep_envelope = false;
 
         if row.instrument > 0 {
+            self.instrument = self.module.get_instrument((row.instrument - 1) as usize);
+
             // Instrument without note - sample position is kept, only envelopes are reset
-            if row.note == 0 && self.is_note_active() {
+            if row.note == 0 && self.has_instrument_and_sample() {
                 keep_position = true;
             }
             // Select new instrument and sample
-            else if let Some(instrument) =
-                self.module.get_instrument((row.instrument - 1) as usize)
-            {
+            else if let Some(instrument) = &self.instrument {
                 if let Some(sample) = instrument.get_sample_for_note(row.note as usize) {
-                    self.instrument = Some(instrument);
                     self.sample = Some(sample);
                 } else {
                     // Invalid note sample (missing?)
@@ -202,10 +226,10 @@ impl<'a> Channel<'a> {
                 self.note_kill();
             }
         } else {
-            keep_volume = true;
+            keep_volume = row.volume != 0;
         }
 
-        if row.has_valid_note() && self.is_note_active() {
+        if row.has_valid_note() && self.has_instrument_and_sample() {
             if row.has_portamento() {
                 keep_period = true;
                 //keep_volume = true;
@@ -283,7 +307,7 @@ impl<'a> Channel<'a> {
             }
             // Tone portamento
             0x03 => {
-                //
+                // TBD
             }
             // Vibrato
             0x04 => {
@@ -317,45 +341,50 @@ impl<'a> Channel<'a> {
         }
 
         self.note_frequency = get_frequency(self.note_period - 16.0 * self.vibrato_note_offset);
-        self.note_step_fp = Fixed::from_f32(self.note_frequency * self.inv_sample_rate);
-        self.filter = self
-            .filter
-            .copy_with_new_coefs(self.note_frequency * self.inv_sample_rate);
+        self.note_step = ((self.note_frequency as f64) / (self.sample_rate as f64)) as f32;
+        self.note_step_fp = self.note_step.into();
+        self.filter = self.filter.copy_with_new_coefs(self.note_step);
 
         self.final_volume = self.note_volume;
         self.final_panning = self.note_panning;
     }
 
-    fn tick_envelopes(&mut self) {
+    fn tick_envelopes(&mut self) -> bool {
+        let mut kill_note = false;
+
         if let Some(instrument) = &self.instrument {
-            self.volume_envelope_ticks = follow_envelope(
-                self.volume_envelope_ticks,
+            let volume = instrument.volume_envelope.tick_and_get_value(
+                &mut self.volume_envelope_ticks,
                 self.note_released,
-                &instrument.volume_envelope,
-            );
+                64,
+            ) as usize;
 
-            let volume = instrument
-                .volume_envelope
-                .get_value(self.volume_envelope_ticks) as usize;
+            if self.note_released {
+                self.note_fadeout -= instrument.volume_envelope.fadeout as i32;
 
-            self.final_volume = ((self.note_volume as usize) * volume) / 64;
+                if self.note_fadeout < 0 {
+                    self.note_fadeout = 0;
+                    kill_note = true;
+                }
+            }
 
-            self.panning_envelope_ticks = follow_envelope(
-                self.panning_envelope_ticks,
-                self.note_released,
-                &instrument.panning_envelope,
-            );
+            self.final_volume =
+                (self.note_volume * volume * (self.note_fadeout as usize)) / (64 * 65536);
 
             let mut panning = (self.note_panning as i32) - 128;
 
             panning += 4
-                * (instrument
-                    .panning_envelope
-                    .get_value(self.panning_envelope_ticks) as i32)
+                * (instrument.panning_envelope.tick_and_get_value(
+                    &mut self.panning_envelope_ticks,
+                    self.note_released,
+                    32,
+                ) as i32)
                 - 128;
 
             self.final_panning = (panning.clamp(-128, 128) + 128).clamp(0, 255) as usize;
         }
+
+        kill_note
     }
 
     pub fn reset(&mut self) {
@@ -372,26 +401,22 @@ impl<'a> Channel<'a> {
         (vl.clamp(0.0, 255.0) as u8, vr.clamp(0.0, 255.0) as u8)
     }
 
-    pub fn tick(
-        &mut self,
-        row: Row,
-        song_state: &SongState,
-        row_tick_index: usize,
-        buffer: &mut [i32],
-    ) -> (u8, u8) {
-        self.song_state = *song_state;
-
+    pub fn tick(&mut self, row: Row, song_state: &SongState, buffer: &mut [i32]) -> (u8, u8) {
         if self.mute {
             return (0, 0);
         }
 
-        if row_tick_index == 0 {
+        if song_state.row_tick == 0 {
             self.tick_new_row(row);
         }
 
-        self.apply_volume(row_tick_index);
-        self.apply_effects(row_tick_index);
-        self.tick_envelopes();
+        self.apply_volume(song_state.row_tick);
+        self.apply_effects(song_state.row_tick);
+
+        if self.tick_envelopes() {
+            self.note_kill();
+            return (0, 0);
+        }
 
         let (vl, vr) = self.get_current_stereo_volume();
         if vl == 0 && vr == 0 {
@@ -467,32 +492,32 @@ impl<'a> Channel<'a> {
                         LoopType::Forward => {
                             render_samples_fp!({
                                 if offset_fp.integer >= sample.loop_end {
-                                    offset_fp = Fixed::from_u32(sample.loop_start);
+                                    offset_fp.integer -= sample.loop_end - sample.loop_start;
                                 }
                             });
                         }
                         LoopType::PingPong => {
-                            /*
                             for f in buffer {
-                                *f = *sample.data.get_unchecked(offset as usize) as i32;
+                                *f = *sample.data.get_unchecked(offset_fp.integer as usize) as i32;
 
                                 if self.loop_dir_forward {
-                                    offset += step;
-                                    if offset >= sample.loop_end {
-                                        offset = sample.loop_end - 1.0;
-                                        //self.loop_dir_forward = false;
+                                    offset_fp.add_mut(&step_fp);
+                                    if offset_fp.integer >= sample.loop_end {
+                                        offset_fp.sub_mut(&step_fp);
+                                        self.loop_dir_forward = false;
                                     }
                                 } else {
-                                    offset -= step;
-                                    if offset < sample.loop_start {
-                                        offset = sample.loop_start;
-                                        //self.loop_dir_forward = true;
+                                    offset_fp.sub_mut(&step_fp);
+                                    if offset_fp.integer < sample.loop_start
+                                        || offset_fp.integer >= (u32::MAX / 2)
+                                    {
+                                        offset_fp.add_mut(&step_fp);
+                                        self.loop_dir_forward = true;
                                     }
                                 }
                             }
 
-                            self.sample_offset = offset;
-                            */
+                            self.sample_offset_fp = offset_fp;
                         }
                     }
                 }

@@ -14,6 +14,9 @@ impl Envelope {
         self.tick_values.clear();
 
         if points.len() < 4 || (points.len() % 2) != 0 {
+            self.loop_start = usize::MAX;
+            self.loop_end = usize::MAX;
+            self.sustain = usize::MAX;
             return;
         }
 
@@ -68,9 +71,13 @@ impl Envelope {
         }
     }
 
-    pub fn get_value(&self, ticks: usize) -> u8 {
-        if self.tick_values.is_empty() {
-            return 0;
+    pub fn is_enabled(&self) -> bool {
+        !self.tick_values.is_empty()
+    }
+
+    pub fn get_value(&self, ticks: usize, default: u8) -> u8 {
+        if !self.is_enabled() {
+            return default;
         }
 
         if ticks >= self.tick_values.len() {
@@ -78,5 +85,29 @@ impl Envelope {
         }
 
         self.tick_values[ticks]
+    }
+
+    fn advance_ticks(&self, mut ticks: usize, note_released: bool) -> usize {
+        if !self.is_enabled() {
+            return ticks;
+        }
+
+        if !note_released && self.sustain != usize::MAX {
+            if ticks < self.sustain as usize {
+                ticks += 1
+            }
+        } else {
+            ticks += 1;
+            if ticks == self.loop_end {
+                ticks = self.loop_start;
+            }
+        }
+
+        ticks
+    }
+
+    pub fn tick_and_get_value(&self, ticks: &mut usize, note_released: bool, default: u8) -> u8 {
+        *ticks = self.advance_ticks(*ticks, note_released);
+        self.get_value(*ticks, default)
     }
 }

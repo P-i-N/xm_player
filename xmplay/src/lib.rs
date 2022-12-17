@@ -53,22 +53,15 @@ mod channel;
 pub use channel::Channel;
 
 mod player;
+pub use player::CallbackPosition;
 pub use player::Player;
+pub use player::SongState;
 
 mod binary_reader;
 pub use binary_reader::BinaryReader;
 
 mod binary_writer;
 pub use binary_writer::BinaryWriter;
-
-mod bit_reader;
-
-mod bit_writer;
-pub use bit_writer::BitWriter;
-
-mod platform;
-pub use platform::DummyInterface;
-pub use platform::PlatformInterface;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -113,7 +106,7 @@ mod math {
     }
 }
 
-type Fixed = fixed::FixedU32x;
+type Fixed = fixed::FixedU32U16;
 
 #[derive(Debug)]
 pub struct FormatError {

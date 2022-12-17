@@ -1,7 +1,7 @@
 use super::Box;
 use super::Error;
-use super::Vec;
 use super::Rc;
+use super::Vec;
 
 use super::BinaryReader;
 use super::Envelope;
@@ -78,16 +78,25 @@ impl Instrument {
             let volume_flags = br.read_u8();
             let panning_flags = br.read_u8();
 
-            self.volume_envelope.build(
-                &volume_env_points[0..num_volume_points * 2],
-                (volume_flags & 2) != 0,
-                (volume_flags & 4) != 0,
-            );
-            self.panning_envelope.build(
-                &panning_env_points[0..num_panning_points * 2],
-                (panning_flags & 2) != 0,
-                (panning_flags & 4) != 0,
-            );
+            if (volume_flags & 1) != 0 {
+                self.volume_envelope.build(
+                    &volume_env_points[0..num_volume_points * 2],
+                    (volume_flags & 2) != 0,
+                    (volume_flags & 4) != 0,
+                );
+            } else {
+                self.volume_envelope.build(&[], false, false);
+            }
+
+            if (panning_flags & 1) != 0 {
+                self.panning_envelope.build(
+                    &panning_env_points[0..num_panning_points * 2],
+                    (panning_flags & 2) != 0,
+                    (panning_flags & 4) != 0,
+                );
+            } else {
+                self.panning_envelope.build(&[], false, false);
+            }
 
             self.vibrato_type = br.read_u8();
             self.vibrato_sweep = br.read_u8();
@@ -107,7 +116,8 @@ impl Instrument {
                 // Seek binary reader to start of sample header
                 br.pos = first_sample_header_pos + i * 40;
 
-                self.samples.push(Rc::new(Sample::new(br, sample_data_pos)?));
+                self.samples
+                    .push(Rc::new(Sample::new(br, sample_data_pos)?));
 
                 // Current binary reader position is start of next sample data position
                 sample_data_pos = br.pos;

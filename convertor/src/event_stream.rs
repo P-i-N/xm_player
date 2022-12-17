@@ -1,10 +1,8 @@
-use std::fmt::Binary;
 use std::hash::Hasher;
 use std::{collections::HashMap, hash::Hash};
 
 use super::*;
 use xmplay::BinaryWriter;
-use xmplay::BitWriter;
 use xmplay::RangeEncoder;
 use xmplay::Row;
 use xmplay::{ChannelDesc, Symbol, SymbolEncodingSize};
